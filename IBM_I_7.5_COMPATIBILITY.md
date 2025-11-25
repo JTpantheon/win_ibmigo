@@ -144,7 +144,7 @@ yum install unixODBC unixODBC-devel libodbc2 ibm-iaccess
 
 ## Conclusion
 
-**The AIX PPC64 patches in this repository make it possible to compile Go code that runs on IBM i 7.5 systems.** The memory addressing changes (0xA → 0x7) and build configuration adjustments work identically on both IBM i 7.4 and 7.5, as both versions share the same core architecture and PASE environment.
+**The AIX PPC64 patches in this repository make it possible to compile Go code that will run on IBM i 7.5 systems.** The memory addressing changes (0xA → 0x7) and build configuration adjustments work identically on both IBM i 7.4 and 7.5, as both versions share the same core architecture and PASE environment.
 
 ### Bottom Line
 
