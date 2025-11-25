@@ -3,6 +3,8 @@ Its A windows version of Go lang with fixes for AIX PPC64 (AIX on power system) 
 
 **Current Version: Go 1.24.10** (with AIX PPC64 patches applied)
 
+**Target Platform:** IBM i 7.4, 7.5 and AIX on Power Systems (PASE environment)
+
 **Other Supported Versions:**
 - Go 1.20.5 (see branch: main or tags)
 - Go 1.25.4 (patches documented - see `AIX_PATCHES_GO_1.24_1.25.md`)

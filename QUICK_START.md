@@ -112,7 +112,10 @@ go build -o myapp.exe myapp.go
 
 ### On IBM i AIX (Target Machine)
 
-1. **IBM i 7.4+** (recommended)
+1. **IBM i 7.4, 7.5 or later** (7.5 recommended for Power10 hardware)
+   - The patches support both IBM i 7.4 and 7.5 identically
+   - Memory addressing is compatible across both versions
+   - AIX 7.2 binary compatibility maintained
 2. **GCC 10** or later
    ```bash
    yum install gcc-10
