@@ -10,21 +10,27 @@ import (
 	"fmt"
 	"internal/goexperiment"
 	"os"
+	_ "unsafe" // for linkname
 )
 
 // cover2 variable stores the current coverage mode and a
 // tear-down function to be called at the end of the testing run.
 var cover2 struct {
-	mode     string
-	tearDown func(coverprofile string, gocoverdir string) (string, error)
+	mode        string
+	tearDown    func(coverprofile string, gocoverdir string) (string, error)
+	snapshotcov func() float64
 }
 
-// registerCover2 is invoked during "go test -cover" runs by the test harness
-// code in _testmain.go; it is used to record a 'tear down' function
+// registerCover2 is invoked during "go test -cover" runs.
+// It is used to record a 'tear down' function
 // (to be called when the test is complete) and the coverage mode.
-func registerCover2(mode string, tearDown func(coverprofile string, gocoverdir string) (string, error)) {
+func registerCover2(mode string, tearDown func(coverprofile string, gocoverdir string) (string, error), snapcov func() float64) {
+	if mode == "" {
+		return
+	}
 	cover2.mode = mode
 	cover2.tearDown = tearDown
+	cover2.snapshotcov = snapcov
 }
 
 // coverReport2 invokes a callback in _testmain.go that will
@@ -40,9 +46,11 @@ func coverReport2() {
 	}
 }
 
-// testGoCoverDir returns the value passed to the -test.gocoverdir
-// flag by the Go command, if goexperiment.CoverageRedesign is
-// in effect.
-func testGoCoverDir() string {
-	return *gocoverdir
+// coverage2 returns a rough "coverage percentage so far"
+// number to support the testing.Coverage() function.
+func coverage2() float64 {
+	if cover2.mode == "" {
+		return 0.0
+	}
+	return cover2.snapshotcov()
 }

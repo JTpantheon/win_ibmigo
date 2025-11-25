@@ -16,6 +16,8 @@ import (
 	"internal/godebug"
 	"internal/goroot"
 	"internal/goversion"
+	"internal/platform"
+	"internal/syslist"
 	"io"
 	"io/fs"
 	"os"
@@ -23,11 +25,12 @@ import (
 	pathpkg "path"
 	"path/filepath"
 	"runtime"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
+	_ "unsafe" // for linkname
 )
 
 // A Context specifies the supporting context for a build.
@@ -285,6 +288,7 @@ func (ctxt *Context) SrcDirs() []string {
 // if set, or else the compiled code's GOARCH, GOOS, and GOROOT.
 var Default Context = defaultContext()
 
+// Keep consistent with cmd/go/internal/cfg.defaultGOPATH.
 func defaultGOPATH() string {
 	env := "HOME"
 	if runtime.GOOS == "windows" {
@@ -304,7 +308,27 @@ func defaultGOPATH() string {
 	return ""
 }
 
-var defaultToolTags, defaultReleaseTags []string
+// defaultToolTags should be an internal detail,
+// but widely used packages access it using linkname.
+// Notable members of the hall of shame include:
+//   - github.com/gopherjs/gopherjs
+//
+// Do not remove or change the type signature.
+// See go.dev/issue/67401.
+//
+//go:linkname defaultToolTags
+var defaultToolTags []string
+
+// defaultReleaseTags should be an internal detail,
+// but widely used packages access it using linkname.
+// Notable members of the hall of shame include:
+//   - github.com/gopherjs/gopherjs
+//
+// Do not remove or change the type signature.
+// See go.dev/issue/67401.
+//
+//go:linkname defaultReleaseTags
+var defaultReleaseTags []string
 
 func defaultContext() Context {
 	var c Context
@@ -345,7 +369,7 @@ func defaultContext() Context {
 	default:
 		// cgo must be explicitly enabled for cross compilation builds
 		if runtime.GOARCH == c.GOARCH && runtime.GOOS == c.GOOS {
-			c.CgoEnabled = cgoEnabled[c.GOOS+"/"+c.GOARCH]
+			c.CgoEnabled = platform.CgoSupported(c.GOOS, c.GOARCH)
 			break
 		}
 		c.CgoEnabled = false
@@ -455,6 +479,11 @@ type Package struct {
 	TestGoFiles  []string // _test.go files in package
 	XTestGoFiles []string // _test.go files outside package
 
+	// Go directive comments (//go:zzz...) found in source files.
+	Directives      []Directive
+	TestDirectives  []Directive
+	XTestDirectives []Directive
+
 	// Dependency information
 	Imports        []string                    // import paths from GoFiles, CgoFiles
 	ImportPos      map[string][]token.Position // line information for Imports
@@ -476,6 +505,12 @@ type Package struct {
 	XTestEmbedPatternPos map[string][]token.Position // line information for XTestEmbedPatternPos
 }
 
+// A Directive is a Go directive comment (//go:zzz...) found in a source file.
+type Directive struct {
+	Text string         // full line comment including leading slashes
+	Pos  token.Position // position of comment
+}
+
 // IsCommand reports whether the package is considered a
 // command to be installed (not just a library).
 // Packages named "main" are treated as commands.
@@ -483,13 +518,13 @@ func (p *Package) IsCommand() bool {
 	return p.Name == "main"
 }
 
-// ImportDir is like Import but processes the Go package found in
+// ImportDir is like [Import] but processes the Go package found in
 // the named directory.
 func (ctxt *Context) ImportDir(dir string, mode ImportMode) (*Package, error) {
 	return ctxt.Import(".", dir, mode)
 }
 
-// NoGoError is the error used by Import to describe a directory
+// NoGoError is the error used by [Import] to describe a directory
 // containing no buildable Go source files. (It may still contain
 // test files, files hidden by build tags, and so on.)
 type NoGoError struct {
@@ -537,7 +572,7 @@ var installgoroot = godebug.New("installgoroot")
 //   - files with build constraints not satisfied by the context
 //
 // If an error occurs, Import returns a non-nil error and a non-nil
-// *Package containing partial information.
+// *[Package] containing partial information.
 func (ctxt *Context) Import(path string, srcDir string, mode ImportMode) (*Package, error) {
 	p := &Package{
 		ImportPath: path,
@@ -786,6 +821,9 @@ Found:
 
 			// Set the install target if applicable.
 			if !p.Goroot || (installgoroot.Value() == "all" && p.ImportPath != "unsafe" && p.ImportPath != "builtin") {
+				if p.Goroot {
+					installgoroot.IncNonDefault()
+				}
 				p.PkgObj = ctxt.joinPath(p.Root, pkga)
 			}
 		}
@@ -966,6 +1004,7 @@ Found:
 
 		var fileList *[]string
 		var importMap, embedMap map[string][]token.Position
+		var directives *[]Directive
 		switch {
 		case isCgo:
 			allTags["cgo"] = true
@@ -973,6 +1012,7 @@ Found:
 				fileList = &p.CgoFiles
 				importMap = importPos
 				embedMap = embedPos
+				directives = &p.Directives
 			} else {
 				// Ignore imports and embeds from cgo files if cgo is disabled.
 				fileList = &p.IgnoredGoFiles
@@ -981,14 +1021,17 @@ Found:
 			fileList = &p.XTestGoFiles
 			importMap = xTestImportPos
 			embedMap = xTestEmbedPos
+			directives = &p.XTestDirectives
 		case isTest:
 			fileList = &p.TestGoFiles
 			importMap = testImportPos
 			embedMap = testEmbedPos
+			directives = &p.TestDirectives
 		default:
 			fileList = &p.GoFiles
 			importMap = importPos
 			embedMap = embedPos
+			directives = &p.Directives
 		}
 		*fileList = append(*fileList, name)
 		if importMap != nil {
@@ -1001,12 +1044,15 @@ Found:
 				embedMap[emb.pattern] = append(embedMap[emb.pattern], emb.pos)
 			}
 		}
+		if directives != nil {
+			*directives = append(*directives, info.directives...)
+		}
 	}
 
 	for tag := range allTags {
 		p.AllTags = append(p.AllTags, tag)
 	}
-	sort.Strings(p.AllTags)
+	slices.Sort(p.AllTags)
 
 	p.EmbedPatterns, p.EmbedPatternPos = cleanDecls(embedPos)
 	p.TestEmbedPatterns, p.TestEmbedPatternPos = cleanDecls(testEmbedPos)
@@ -1021,10 +1067,10 @@ Found:
 	// The standard assemblers expect .s files.
 	if len(p.CgoFiles) > 0 {
 		p.SFiles = append(p.SFiles, Sfiles...)
-		sort.Strings(p.SFiles)
+		slices.Sort(p.SFiles)
 	} else {
 		p.IgnoredOtherFiles = append(p.IgnoredOtherFiles, Sfiles...)
-		sort.Strings(p.IgnoredOtherFiles)
+		slices.Sort(p.IgnoredOtherFiles)
 	}
 
 	if badGoError != nil {
@@ -1066,7 +1112,7 @@ func uniq(list []string) []string {
 	}
 	out := make([]string, len(list))
 	copy(out, list)
-	sort.Strings(out)
+	slices.Sort(out)
 	uniq := out[:0]
 	for _, x := range out {
 		if len(uniq) == 0 || uniq[len(uniq)-1] != x {
@@ -1366,7 +1412,7 @@ func parseWord(data []byte) (word, rest []byte) {
 }
 
 // MatchFile reports whether the file with the given name in the given directory
-// matches the context and would be included in a Package created by ImportDir
+// matches the context and would be included in a [Package] created by [ImportDir]
 // of that directory.
 //
 // MatchFile considers the name of the file and may use ctxt.OpenFile to
@@ -1380,13 +1426,14 @@ var dummyPkg Package
 
 // fileInfo records information learned about a file included in a build.
 type fileInfo struct {
-	name     string // full name including dir
-	header   []byte
-	fset     *token.FileSet
-	parsed   *ast.File
-	parseErr error
-	imports  []fileImport
-	embeds   []fileEmbed
+	name       string // full name including dir
+	header     []byte
+	fset       *token.FileSet
+	parsed     *ast.File
+	parseErr   error
+	imports    []fileImport
+	embeds     []fileEmbed
+	directives []Directive
 }
 
 type fileImport struct {
@@ -1479,7 +1526,7 @@ func cleanDecls(m map[string][]token.Position) ([]string, map[string][]token.Pos
 	for path := range m {
 		all = append(all, path)
 	}
-	sort.Strings(all)
+	slices.Sort(all)
 	return all, m
 }
 
@@ -1580,6 +1627,15 @@ func (ctxt *Context) shouldBuild(content []byte, allTags map[string]bool) (shoul
 	return shouldBuild, sawBinaryOnly, nil
 }
 
+// parseFileHeader should be an internal detail,
+// but widely used packages access it using linkname.
+// Notable members of the hall of shame include:
+//   - github.com/bazelbuild/bazel-gazelle
+//
+// Do not remove or change the type signature.
+// See go.dev/issue/67401.
+//
+//go:linkname parseFileHeader
 func parseFileHeader(content []byte) (trimmed, goBuild []byte, sawBinaryOnly bool, err error) {
 	end := 0
 	p := content
@@ -1660,6 +1716,11 @@ func (ctxt *Context) saveCgo(filename string, di *Package, cg *ast.CommentGroup)
 		//
 		line = strings.TrimSpace(line)
 		if len(line) < 5 || line[:4] != "#cgo" || (line[4] != ' ' && line[4] != '\t') {
+			continue
+		}
+
+		// #cgo (nocallback|noescape) <function name>
+		if fields := strings.Fields(line); len(fields) == 3 && (fields[1] == "nocallback" || fields[1] == "noescape") {
 			continue
 		}
 
@@ -1916,7 +1977,7 @@ func (ctxt *Context) matchTag(name string, allTags map[string]bool) bool {
 	if ctxt.GOOS == "ios" && name == "darwin" {
 		return true
 	}
-	if name == "unix" && unixOS[ctxt.GOOS] {
+	if name == "unix" && syslist.UnixOS[ctxt.GOOS] {
 		return true
 	}
 	if name == "boringcrypto" {
@@ -1979,14 +2040,14 @@ func (ctxt *Context) goodOSArchFile(name string, allTags map[string]bool) bool {
 		l = l[:n-1]
 	}
 	n := len(l)
-	if n >= 2 && knownOS[l[n-2]] && knownArch[l[n-1]] {
+	if n >= 2 && syslist.KnownOS[l[n-2]] && syslist.KnownArch[l[n-1]] {
 		if allTags != nil {
 			// In case we short-circuit on l[n-1].
 			allTags[l[n-2]] = true
 		}
 		return ctxt.matchTag(l[n-1], allTags) && ctxt.matchTag(l[n-2], allTags)
 	}
-	if n >= 1 && (knownOS[l[n-1]] || knownArch[l[n-1]]) {
+	if n >= 1 && (syslist.KnownOS[l[n-1]] || syslist.KnownArch[l[n-1]]) {
 		return ctxt.matchTag(l[n-1], allTags)
 	}
 	return true

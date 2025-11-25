@@ -43,6 +43,10 @@ type SymKind uint8
 const (
 	Sxxx SymKind = iota
 	STEXT
+	STEXTFIPSSTART
+	STEXTFIPS
+	STEXTFIPSEND
+	STEXTEND
 	SELFRXSECT
 	SMACHOPLT
 
@@ -53,6 +57,10 @@ const (
 	SGOFUNC
 	SGCBITS
 	SRODATA
+	SRODATAFIPSSTART
+	SRODATAFIPS
+	SRODATAFIPSEND
+	SRODATAEND
 	SFUNCTAB
 
 	SELFROSECT
@@ -76,6 +84,7 @@ const (
 	SGCBITSRELRO
 	SRODATARELRO
 	SFUNCTABRELRO
+	SELFRELROSECT
 
 	// Part of .data.rel.ro if it exists, otherwise part of .rodata.
 	STYPELINK
@@ -86,14 +95,23 @@ const (
 	// Writable sections.
 	SFirstWritable
 	SBUILDINFO
+	SFIPSINFO
 	SELFSECT
 	SMACHO
 	SMACHOGOT
 	SWINDOWS
 	SELFGOT
 	SNOPTRDATA
+	SNOPTRDATAFIPSSTART
+	SNOPTRDATAFIPS
+	SNOPTRDATAFIPSEND
+	SNOPTRDATAEND
 	SINITARR
 	SDATA
+	SDATAFIPSSTART
+	SDATAFIPS
+	SDATAFIPSEND
+	SDATAEND
 	SXCOFFTOC
 	SBSS
 	SNOPTRBSS
@@ -123,6 +141,10 @@ const (
 	SDWARFRANGE
 	SDWARFLOC
 	SDWARFLINES
+
+	// SEH symbol types
+	SSEHUNWINDINFO
+	SSEHSECT
 )
 
 // AbiSymKindToSymKind maps values read from object files (which are
@@ -130,9 +152,13 @@ const (
 var AbiSymKindToSymKind = [...]SymKind{
 	objabi.Sxxx:                    Sxxx,
 	objabi.STEXT:                   STEXT,
+	objabi.STEXTFIPS:               STEXTFIPS,
 	objabi.SRODATA:                 SRODATA,
+	objabi.SRODATAFIPS:             SRODATAFIPS,
 	objabi.SNOPTRDATA:              SNOPTRDATA,
+	objabi.SNOPTRDATAFIPS:          SNOPTRDATAFIPS,
 	objabi.SDATA:                   SDATA,
+	objabi.SDATAFIPS:               SDATAFIPS,
 	objabi.SBSS:                    SBSS,
 	objabi.SNOPTRBSS:               SNOPTRBSS,
 	objabi.STLSBSS:                 STLSBSS,
@@ -148,6 +174,7 @@ var AbiSymKindToSymKind = [...]SymKind{
 	objabi.SLIBFUZZER_8BIT_COUNTER: SLIBFUZZER_8BIT_COUNTER,
 	objabi.SCOVERAGE_COUNTER:       SCOVERAGE_COUNTER,
 	objabi.SCOVERAGE_AUXVAR:        SCOVERAGE_AUXVAR,
+	objabi.SSEHUNWINDINFO:          SSEHUNWINDINFO,
 }
 
 // ReadOnly are the symbol kinds that form read-only sections. In some
@@ -160,6 +187,10 @@ var ReadOnly = []SymKind{
 	SGOFUNC,
 	SGCBITS,
 	SRODATA,
+	SRODATAFIPSSTART,
+	SRODATAFIPS,
+	SRODATAFIPSEND,
+	SRODATAEND,
 	SFUNCTAB,
 }
 
@@ -175,7 +206,31 @@ var RelROMap = map[SymKind]SymKind{
 	SFUNCTAB:  SFUNCTABRELRO,
 }
 
-// IsData returns true if the type is a data type.
+// IsText returns true if t is a text type.
+func (t SymKind) IsText() bool {
+	return STEXT <= t && t <= STEXTEND
+}
+
+// IsData returns true if t is any kind of data type.
 func (t SymKind) IsData() bool {
-	return t == SDATA || t == SNOPTRDATA || t == SBSS || t == SNOPTRBSS
+	return SNOPTRDATA <= t && t <= SNOPTRBSS
+}
+
+// IsDATA returns true if t is one of the SDATA types.
+func (t SymKind) IsDATA() bool {
+	return SDATA <= t && t <= SDATAEND
+}
+
+// IsRODATA returns true if t is one of the SRODATA types.
+func (t SymKind) IsRODATA() bool {
+	return SRODATA <= t && t <= SRODATAEND
+}
+
+// IsNOPTRDATA returns true if t is one of the SNOPTRDATA types.
+func (t SymKind) IsNOPTRDATA() bool {
+	return SNOPTRDATA <= t && t <= SNOPTRDATAEND
+}
+
+func (t SymKind) IsDWARF() bool {
+	return SDWARFSECT <= t && t <= SDWARFLINES
 }

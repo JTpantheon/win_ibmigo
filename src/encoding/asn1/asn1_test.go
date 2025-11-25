@@ -7,10 +7,12 @@ package asn1
 import (
 	"bytes"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"math"
 	"math/big"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -323,6 +325,10 @@ func TestUTCTime(t *testing.T) {
 var generalizedTimeTestData = []timeTest{
 	{"20100102030405Z", true, time.Date(2010, 01, 02, 03, 04, 05, 0, time.UTC)},
 	{"20100102030405", false, time.Time{}},
+	{"20100102030405.123456Z", true, time.Date(2010, 01, 02, 03, 04, 05, 123456e3, time.UTC)},
+	{"20100102030405.123456", false, time.Time{}},
+	{"20100102030405.Z", false, time.Time{}},
+	{"20100102030405.", false, time.Time{}},
 	{"20100102030405+0607", true, time.Date(2010, 01, 02, 03, 04, 05, 0, time.FixedZone("", 6*60*60+7*60))},
 	{"20100102030405-0607", true, time.Date(2010, 01, 02, 03, 04, 05, 0, time.FixedZone("", -6*60*60-7*60))},
 	/* These are invalid times. However, the time package normalises times
@@ -1162,5 +1168,48 @@ func TestNonMinimalEncodedOID(t *testing.T) {
 	_, err = Unmarshal(h, &oid)
 	if err == nil {
 		t.Fatalf("accepted non-minimally encoded oid")
+	}
+}
+
+func BenchmarkObjectIdentifierString(b *testing.B) {
+	oidPublicKeyRSA := ObjectIdentifier{1, 2, 840, 113549, 1, 1, 1}
+	for i := 0; i < b.N; i++ {
+		_ = oidPublicKeyRSA.String()
+	}
+}
+
+func TestParsingMemoryConsumption(t *testing.T) {
+	// Craft a syntatically valid, but empty, ~10 MB DER bomb. A successful
+	// unmarshal of this bomb should yield ~280 MB. However, the parsing should
+	// fail due to the empty content; and, in such cases, we want to make sure
+	// that we do not unnecessarily allocate memories.
+	derBomb := make([]byte, 10_000_000)
+	for i := range derBomb {
+		derBomb[i] = 0x30
+	}
+	derBomb = append([]byte{0x30, 0x83, 0x98, 0x96, 0x80}, derBomb...)
+
+	var m runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&m)
+	memBefore := m.TotalAlloc
+
+	var out []struct {
+		Id       []int
+		Critical bool `asn1:"optional"`
+		Value    []byte
+	}
+	_, err := Unmarshal(derBomb, &out)
+	if !errors.As(err, &SyntaxError{}) {
+		t.Fatalf("Incorrect error result: want (%v), but got (%v) instead", &SyntaxError{}, err)
+	}
+
+	runtime.ReadMemStats(&m)
+	memDiff := m.TotalAlloc - memBefore
+
+	// Ensure that the memory allocated does not exceed 10<<21 (~20 MB) when
+	// the parsing fails.
+	if memDiff > 10<<21 {
+		t.Errorf("Too much memory allocated while parsing DER: %v MiB", memDiff/1024/1024)
 	}
 }

@@ -1,6 +1,13 @@
 # The Go
-Its A windows version of Go lang 1.20.5 with fixes for AIX PPC64 (AIX on power system) cross compile.
+Its A windows version of Go lang with fixes for AIX PPC64 (AIX on power system) cross compile.
 
+**Current Version: Go 1.24.10** (with AIX PPC64 patches applied)
+
+**Other Supported Versions:**
+- Go 1.20.5 (see branch: main or tags)
+- Go 1.25.4 (patches documented - see `AIX_PATCHES_GO_1.24_1.25.md`)
+
+📄 **See `VERIFICATION_REPORT.md` for detailed analysis and `QUICK_START.md` for build instructions**
 
 # The Go Programming Language
 

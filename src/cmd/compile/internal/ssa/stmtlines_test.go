@@ -7,17 +7,20 @@ package ssa_test
 import (
 	cmddwarf "cmd/internal/dwarf"
 	"cmd/internal/quoted"
+	"cmp"
 	"debug/dwarf"
 	"debug/elf"
 	"debug/macho"
 	"debug/pe"
 	"fmt"
+	"internal/platform"
 	"internal/testenv"
 	"internal/xcoff"
 	"io"
 	"os"
 	"runtime"
-	"sort"
+	"slices"
+	"strings"
 	"testing"
 )
 
@@ -53,8 +56,8 @@ type Line struct {
 }
 
 func TestStmtLines(t *testing.T) {
-	if runtime.GOOS == "plan9" {
-		t.Skip("skipping on plan9; no DWARF symbol table in executables")
+	if !platform.ExecutableHasDWARF(runtime.GOOS, runtime.GOARCH) {
+		t.Skipf("skipping on %s/%s: no DWARF symbol table in executables", runtime.GOOS, runtime.GOARCH)
 	}
 
 	if runtime.GOOS == "aix" {
@@ -75,8 +78,15 @@ func TestStmtLines(t *testing.T) {
 		}
 	}
 
+	// Build cmd/go forcing DWARF enabled, as a large test case.
+	dir := t.TempDir()
+	out, err := testenv.Command(t, testenv.GoToolPath(t), "build", "-ldflags=-w=0", "-o", dir+"/test.exe", "cmd/go").CombinedOutput()
+	if err != nil {
+		t.Fatalf("go build: %v\n%s", err, out)
+	}
+
 	lines := map[Line]bool{}
-	dw, err := open(testenv.GoToolPath(t))
+	dw, err := open(dir + "/test.exe")
 	must(err)
 	rdr := dw.Reader()
 	rdr.Seek(0)
@@ -93,7 +103,7 @@ func TestStmtLines(t *testing.T) {
 		if pkgname == "runtime" {
 			continue
 		}
-		if pkgname == "crypto/internal/nistec/fiat" {
+		if pkgname == "crypto/internal/fips140/nistec/fiat" {
 			continue // golang.org/issue/49372
 		}
 		if e.Val(dwarf.AttrStmtList) == nil {
@@ -136,11 +146,11 @@ func TestStmtLines(t *testing.T) {
 	}
 	t.Logf("Saw %d out of %d lines without statement marks", len(nonStmtLines), len(lines))
 	if testing.Verbose() {
-		sort.Slice(nonStmtLines, func(i, j int) bool {
-			if nonStmtLines[i].File != nonStmtLines[j].File {
-				return nonStmtLines[i].File < nonStmtLines[j].File
+		slices.SortFunc(nonStmtLines, func(a, b Line) int {
+			if a.File != b.File {
+				return strings.Compare(a.File, b.File)
 			}
-			return nonStmtLines[i].Line < nonStmtLines[j].Line
+			return cmp.Compare(a.Line, b.Line)
 		})
 		for _, l := range nonStmtLines {
 			t.Logf("%s:%d has no DWARF is_stmt mark\n", l.File, l.Line)

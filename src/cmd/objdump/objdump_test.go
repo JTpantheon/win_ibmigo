@@ -5,17 +5,15 @@
 package main
 
 import (
-	"cmd/internal/notsha256"
+	"cmd/internal/hash"
 	"flag"
 	"fmt"
-	"go/build"
 	"internal/platform"
 	"internal/testenv"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync"
 	"testing"
 )
 
@@ -30,26 +28,6 @@ func TestMain(m *testing.M) {
 	os.Setenv("GO_OBJDUMPTEST_IS_OBJDUMP", "1")
 	os.Exit(m.Run())
 }
-
-// objdumpPath returns the path to the "objdump" binary to run.
-func objdumpPath(t testing.TB) string {
-	t.Helper()
-	testenv.MustHaveExec(t)
-
-	objdumpPathOnce.Do(func() {
-		objdumpExePath, objdumpPathErr = os.Executable()
-	})
-	if objdumpPathErr != nil {
-		t.Fatal(objdumpPathErr)
-	}
-	return objdumpExePath
-}
-
-var (
-	objdumpPathOnce sync.Once
-	objdumpExePath  string
-	objdumpPathErr  error
-)
 
 var x86Need = []string{ // for both 386 and AMD64
 	"JMP main.main(SB)",
@@ -87,6 +65,18 @@ var armGnuNeed = []string{ // for both ARM and AMR64
 	"cmp",
 }
 
+var loong64Need = []string{
+	"JMP main.main(SB)",
+	"CALL main.Println(SB)",
+	"RET",
+}
+
+var loong64GnuNeed = []string{
+	"ld.b",
+	"bl",
+	"beq",
+}
+
 var ppcNeed = []string{
 	"BR main.main(SB)",
 	"CALL main.Println(SB)",
@@ -105,16 +95,16 @@ var ppcGnuNeed = []string{
 	"beq",
 }
 
+var s390xGnuNeed = []string{
+	"brasl",
+	"j",
+	"clije",
+}
+
 func mustHaveDisasm(t *testing.T) {
 	switch runtime.GOARCH {
-	case "loong64":
-		t.Skipf("skipping on %s", runtime.GOARCH)
 	case "mips", "mipsle", "mips64", "mips64le":
 		t.Skipf("skipping on %s, issue 12559", runtime.GOARCH)
-	case "riscv64":
-		t.Skipf("skipping on %s, issue 36738", runtime.GOARCH)
-	case "s390x":
-		t.Skipf("skipping on %s, issue 15255", runtime.GOARCH)
 	}
 }
 
@@ -144,7 +134,7 @@ func testDisasm(t *testing.T, srcfname string, printCode bool, printGnuAsm bool,
 		goarch = f[1]
 	}
 
-	hash := notsha256.Sum256([]byte(fmt.Sprintf("%v-%v-%v-%v", srcfname, flags, printCode, printGnuAsm)))
+	hash := hash.Sum16([]byte(fmt.Sprintf("%v-%v-%v-%v", srcfname, flags, printCode, printGnuAsm)))
 	tmp := t.TempDir()
 	hello := filepath.Join(tmp, fmt.Sprintf("hello-%x.exe", hash))
 	args := []string{"build", "-o", hello}
@@ -153,9 +143,6 @@ func testDisasm(t *testing.T, srcfname string, printCode bool, printGnuAsm bool,
 	cmd := testenv.Command(t, testenv.GoToolPath(t), args...)
 	// "Bad line" bug #36683 is sensitive to being run in the source directory.
 	cmd.Dir = "testdata"
-	// Ensure that the source file location embedded in the binary matches our
-	// actual current GOROOT, instead of GOROOT_FINAL if set.
-	cmd.Env = append(os.Environ(), "GOROOT_FINAL=")
 	t.Logf("Running %v", cmd.Args)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -178,6 +165,8 @@ func testDisasm(t *testing.T, srcfname string, printCode bool, printGnuAsm bool,
 		need = append(need, armNeed...)
 	case "arm64":
 		need = append(need, arm64Need...)
+	case "loong64":
+		need = append(need, loong64Need...)
 	case "ppc64", "ppc64le":
 		var pie bool
 		for _, flag := range flags {
@@ -204,8 +193,12 @@ func testDisasm(t *testing.T, srcfname string, printCode bool, printGnuAsm bool,
 			need = append(need, i386GnuNeed...)
 		case "arm", "arm64":
 			need = append(need, armGnuNeed...)
+		case "loong64":
+			need = append(need, loong64GnuNeed...)
 		case "ppc64", "ppc64le":
 			need = append(need, ppcGnuNeed...)
+		case "s390x":
+			need = append(need, s390xGnuNeed...)
 		}
 	}
 	args = []string{
@@ -220,7 +213,7 @@ func testDisasm(t *testing.T, srcfname string, printCode bool, printGnuAsm bool,
 	if printGnuAsm {
 		args = append([]string{"-gnu"}, args...)
 	}
-	cmd = testenv.Command(t, objdumpPath(t), args...)
+	cmd = testenv.Command(t, testenv.Executable(t), args...)
 	cmd.Dir = "testdata" // "Bad line" bug #36683 is sensitive to being run in the source directory
 	out, err = cmd.CombinedOutput()
 	t.Logf("Running %v", cmd.Args)
@@ -253,7 +246,7 @@ func testDisasm(t *testing.T, srcfname string, printCode bool, printGnuAsm bool,
 func testGoAndCgoDisasm(t *testing.T, printCode bool, printGnuAsm bool) {
 	t.Parallel()
 	testDisasm(t, "fmthello.go", printCode, printGnuAsm)
-	if build.Default.CgoEnabled {
+	if testenv.HasCGO() {
 		testDisasm(t, "fmthellocgo.go", printCode, printGnuAsm)
 	}
 }
@@ -273,7 +266,7 @@ func TestDisasmGnuAsm(t *testing.T) {
 func TestDisasmExtld(t *testing.T) {
 	testenv.MustHaveCGO(t)
 	switch runtime.GOOS {
-	case "plan9", "windows":
+	case "plan9":
 		t.Skipf("skipping on %s", runtime.GOOS)
 	}
 	t.Parallel()
@@ -299,7 +292,7 @@ func TestDisasmGoobj(t *testing.T) {
 	tmp := t.TempDir()
 
 	importcfgfile := filepath.Join(tmp, "hello.importcfg")
-	testenv.WriteImportcfg(t, importcfgfile, nil)
+	testenv.WriteImportcfg(t, importcfgfile, nil, "testdata/fmthello.go")
 
 	hello := filepath.Join(tmp, "hello.o")
 	args := []string{"tool", "compile", "-p=main", "-importcfg=" + importcfgfile, "-o", hello}
@@ -318,7 +311,7 @@ func TestDisasmGoobj(t *testing.T) {
 		hello,
 	}
 
-	out, err = testenv.Command(t, objdumpPath(t), args...).CombinedOutput()
+	out, err = testenv.Command(t, testenv.Executable(t), args...).CombinedOutput()
 	if err != nil {
 		t.Fatalf("objdump fmthello.o: %v\n%s", err, out)
 	}
@@ -359,7 +352,7 @@ func TestGoobjFileNumber(t *testing.T) {
 		t.Fatalf("build failed: %v\n%s", err, out)
 	}
 
-	cmd = testenv.Command(t, objdumpPath(t), obj)
+	cmd = testenv.Command(t, testenv.Executable(t), obj)
 	out, err = cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("objdump failed: %v\n%s", err, out)
@@ -378,11 +371,10 @@ func TestGoobjFileNumber(t *testing.T) {
 }
 
 func TestGoObjOtherVersion(t *testing.T) {
-	testenv.MustHaveExec(t)
 	t.Parallel()
 
 	obj := filepath.Join("testdata", "go116.o")
-	cmd := testenv.Command(t, objdumpPath(t), obj)
+	cmd := testenv.Command(t, testenv.Executable(t), obj)
 	out, err := cmd.CombinedOutput()
 	if err == nil {
 		t.Fatalf("objdump go116.o succeeded unexpectedly")

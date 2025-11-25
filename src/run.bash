@@ -20,8 +20,7 @@
 # and will be removed if it stops being needed. See go.dev/issue/12508.
 #
 # GO_TEST_TIMEOUT_SCALE: a non-negative integer factor to scale test timeout by.
-# Defaults to 1, or as a special case for the purpose of the Go build system (x/build),
-# defaults to 2 when GOARCH is arm, and to 4 when GOARCH is mips, mipsle, mips64, or mips64le.
+# Defaults to 1.
 
 set -e
 
@@ -32,7 +31,6 @@ fi
 
 export GOENV=off
 eval $(../bin/go tool dist env)
-export GOROOT   # The api test requires GOROOT to be set, so set it to match ../bin/go.
 
 unset CDPATH	# in case user has it set
 
@@ -43,15 +41,7 @@ export CC
 ulimit -c 0
 
 # Raise soft limits to hard limits for NetBSD/OpenBSD.
-# We need at least 256 files and ~300 MB of bss.
-# On OS X ulimit -S -n rejects 'unlimited'.
-#
-# Note that ulimit -S -n may fail if ulimit -H -n is set higher than a
-# non-root process is allowed to set the high limit.
-# This is a system misconfiguration and should be fixed on the
-# broken system, not "fixed" by ignoring the failure here.
-# See longer discussion on golang.org/issue/7381.
-[ "$(ulimit -H -n)" = "unlimited" ] || ulimit -S -n $(ulimit -H -n)
+# We need at least ~300 MB of bss.
 [ "$(ulimit -H -d)" = "unlimited" ] || ulimit -S -d $(ulimit -H -d)
 
 # Thread count limit on NetBSD 7.

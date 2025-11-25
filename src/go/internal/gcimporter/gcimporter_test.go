@@ -7,8 +7,6 @@ package gcimporter_test
 import (
 	"bytes"
 	"fmt"
-	"internal/goexperiment"
-	"internal/goroot"
 	"internal/testenv"
 	"os"
 	"os/exec"
@@ -16,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -37,7 +36,7 @@ func TestMain(m *testing.M) {
 // compile runs the compiler on filename, with dirname as the working directory,
 // and writes the output file to outdirname.
 // compile gives the resulting package a packagepath of testdata/<filebasename>.
-func compile(t *testing.T, dirname, filename, outdirname string, packagefiles map[string]string) string {
+func compile(t *testing.T, dirname, filename, outdirname string, packageFiles map[string]string, pkgImports ...string) string {
 	// filename must end with ".go"
 	basename, ok := strings.CutSuffix(filepath.Base(filename), ".go")
 	if !ok {
@@ -47,16 +46,9 @@ func compile(t *testing.T, dirname, filename, outdirname string, packagefiles ma
 	outname := filepath.Join(outdirname, objname)
 
 	importcfgfile := os.DevNull
-	if len(packagefiles) > 0 {
+	if len(packageFiles) > 0 || len(pkgImports) > 0 {
 		importcfgfile = filepath.Join(outdirname, basename) + ".importcfg"
-		importcfg := new(bytes.Buffer)
-		fmt.Fprintf(importcfg, "# import config")
-		for k, v := range packagefiles {
-			fmt.Fprintf(importcfg, "\npackagefile %s=%s\n", k, v)
-		}
-		if err := os.WriteFile(importcfgfile, importcfg.Bytes(), 0655); err != nil {
-			t.Fatal(err)
-		}
+		testenv.WriteImportcfg(t, importcfgfile, packageFiles, pkgImports...)
 	}
 
 	pkgpath := path.Join("testdata", basename)
@@ -108,27 +100,13 @@ func TestImportTestdata(t *testing.T) {
 		"exports.go":  {"go/ast", "go/token"},
 		"generics.go": nil,
 	}
-	if goexperiment.Unified {
-		// TODO(mdempsky): Fix test below to flatten the transitive
-		// Package.Imports graph. Unified IR is more precise about
-		// recreating the package import graph.
-		testfiles["exports.go"] = []string{"go/ast"}
-	}
+	testfiles["exports.go"] = []string{"go/ast"}
 
 	for testfile, wantImports := range testfiles {
 		tmpdir := mktmpdir(t)
 		defer os.RemoveAll(tmpdir)
 
-		packageFiles := map[string]string{}
-		for _, pkg := range wantImports {
-			export, _ := FindPkg(pkg, "testdata")
-			if export == "" {
-				t.Fatalf("no export data found for %s", pkg)
-			}
-			packageFiles[pkg] = export
-		}
-
-		compile(t, "testdata", testfile, filepath.Join(tmpdir, "testdata"), packageFiles)
+		compile(t, "testdata", testfile, filepath.Join(tmpdir, "testdata"), nil, wantImports...)
 		path := "./testdata/" + strings.TrimSuffix(testfile, ".go")
 
 		if pkg := testPath(t, path, tmpdir); pkg != nil {
@@ -155,6 +133,16 @@ func TestImportTypeparamTests(t *testing.T) {
 		t.Skipf("gc-built packages not available (compiler = %s)", runtime.Compiler)
 	}
 
+	// cmd/distpack removes the GOROOT/test directory, so skip if it isn't there.
+	// cmd/distpack also requires the presence of GOROOT/VERSION, so use that to
+	// avoid false-positive skips.
+	gorootTest := filepath.Join(testenv.GOROOT(t), "test")
+	if _, err := os.Stat(gorootTest); os.IsNotExist(err) {
+		if _, err := os.Stat(filepath.Join(testenv.GOROOT(t), "VERSION")); err == nil {
+			t.Skipf("skipping: GOROOT/test not present")
+		}
+	}
+
 	testenv.MustHaveGoBuild(t)
 
 	tmpdir := mktmpdir(t)
@@ -162,21 +150,10 @@ func TestImportTypeparamTests(t *testing.T) {
 
 	// Check go files in test/typeparam, except those that fail for a known
 	// reason.
-	rootDir := filepath.Join(testenv.GOROOT(t), "test", "typeparam")
+	rootDir := filepath.Join(gorootTest, "typeparam")
 	list, err := os.ReadDir(rootDir)
 	if err != nil {
 		t.Fatal(err)
-	}
-
-	var skip map[string]string
-	if !goexperiment.Unified {
-		// The Go 1.18 frontend still fails several cases.
-		skip = map[string]string{
-			"equal.go":      "inconsistent embedded sorting", // TODO(rfindley): investigate this.
-			"nested.go":     "fails to compile",              // TODO(rfindley): investigate this.
-			"issue47631.go": "can not handle local type declarations",
-			"issue55101.go": "fails to compile",
-		}
 	}
 
 	for _, entry := range list {
@@ -186,10 +163,6 @@ func TestImportTypeparamTests(t *testing.T) {
 		}
 
 		t.Run(entry.Name(), func(t *testing.T) {
-			if reason, ok := skip[entry.Name()]; ok {
-				t.Skip(reason)
-			}
-
 			filename := filepath.Join(rootDir, entry.Name())
 			src, err := os.ReadFile(filename)
 			if err != nil {
@@ -204,11 +177,7 @@ func TestImportTypeparamTests(t *testing.T) {
 
 			// Compile and import, and compare the resulting package with the package
 			// that was type-checked directly.
-			pkgFiles, err := goroot.PkgfileMap()
-			if err != nil {
-				t.Fatal(err)
-			}
-			compile(t, rootDir, entry.Name(), filepath.Join(tmpdir, "testdata"), pkgFiles)
+			compile(t, rootDir, entry.Name(), filepath.Join(tmpdir, "testdata"), nil, filename)
 			pkgName := strings.TrimSuffix(entry.Name(), ".go")
 			imported := importPkg(t, "./testdata/"+pkgName, tmpdir)
 			checked := checkFile(t, filename, src)
@@ -316,17 +285,31 @@ func TestVersionHandling(t *testing.T) {
 		// test that export data can be imported
 		_, err := Import(fset, make(map[string]*types.Package), pkgpath, dir, nil)
 		if err != nil {
-			// ok to fail if it fails with a no longer supported error for select files
-			if strings.Contains(err.Error(), "no longer supported") {
+			// ok to fail if it fails with a 'not the start of an archive file' error for select files
+			if strings.Contains(err.Error(), "not the start of an archive file") {
 				switch name {
-				case "test_go1.7_0.a", "test_go1.7_1.a",
-					"test_go1.8_4.a", "test_go1.8_5.a",
-					"test_go1.11_6b.a", "test_go1.11_999b.a":
+				case "test_go1.8_4.a",
+					"test_go1.8_5.a":
 					continue
 				}
 				// fall through
 			}
-			// ok to fail if it fails with a newer version error for select files
+			// ok to fail if it fails with a 'no longer supported' error for select files
+			if strings.Contains(err.Error(), "no longer supported") {
+				switch name {
+				case "test_go1.7_0.a",
+					"test_go1.7_1.a",
+					"test_go1.8_4.a",
+					"test_go1.8_5.a",
+					"test_go1.11_0i.a",
+					"test_go1.11_6b.a",
+					"test_go1.11_999b.a",
+					"test_go1.11_999i.a":
+					continue
+				}
+				// fall through
+			}
+			// ok to fail if it fails with a 'newer version' error for select files
 			if strings.Contains(err.Error(), "newer version") {
 				switch name {
 				case "test_go1.11_999i.a":
@@ -346,6 +329,8 @@ func TestVersionHandling(t *testing.T) {
 		}
 		// 2) find export data
 		i := bytes.Index(data, []byte("\n$$B\n")) + 5
+		// Export data can contain "\n$$\n" in string constants, however,
+		// searching for the next end of section marker "\n$$\n" is good enough for tests.
 		j := bytes.Index(data[i:], []byte("\n$$\n")) + i
 		if i < 0 || j < 0 || i > j {
 			t.Fatalf("export data section not found (i = %d, j = %d)", i, j)
@@ -418,7 +403,7 @@ var importedObjectTests = []struct {
 	{"math.Pi", "const Pi untyped float"},
 	{"math.Sin", "func Sin(x float64) float64"},
 	{"go/ast.NotNilFilter", "func NotNilFilter(_ string, v reflect.Value) bool"},
-	{"go/internal/gcimporter.FindPkg", "func FindPkg(path string, srcDir string) (filename string, id string)"},
+	{"internal/exportdata.FindPkg", "func FindPkg(path string, srcDir string) (filename string, id string, err error)"},
 
 	// interfaces
 	{"context.Context", "type Context interface{Deadline() (deadline time.Time, ok bool); Done() <-chan struct{}; Err() error; Value(key any) any}"},
@@ -567,12 +552,6 @@ func TestIssue13566(t *testing.T) {
 		t.Skipf("gc-built packages not available (compiler = %s)", runtime.Compiler)
 	}
 
-	// On windows, we have to set the -D option for the compiler to avoid having a drive
-	// letter and an illegal ':' in the import path - just skip it (see also issue #3483).
-	if runtime.GOOS == "windows" {
-		t.Skip("avoid dealing with relative paths/drive letters on windows")
-	}
-
 	tmpdir := mktmpdir(t)
 	defer os.RemoveAll(tmpdir)
 	testoutdir := filepath.Join(tmpdir, "testdata")
@@ -585,13 +564,8 @@ func TestIssue13566(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	jsonExport, _ := FindPkg("encoding/json", "testdata")
-	if jsonExport == "" {
-		t.Fatalf("no export data found for encoding/json")
-	}
-
-	compile(t, "testdata", "a.go", testoutdir, map[string]string{"encoding/json": jsonExport})
-	compile(t, testoutdir, bpath, testoutdir, map[string]string{"testdata/a": filepath.Join(testoutdir, "a.o")})
+	compile(t, "testdata", "a.go", testoutdir, nil, "encoding/json")
+	compile(t, testoutdir, bpath, testoutdir, map[string]string{"testdata/a": filepath.Join(testoutdir, "a.o")}, "encoding/json")
 
 	// import must succeed (test for issue at hand)
 	pkg := importPkg(t, "./testdata/b", tmpdir)
@@ -610,12 +584,6 @@ func TestTypeNamingOrder(t *testing.T) {
 	// This package only handles gc export data.
 	if runtime.Compiler != "gc" {
 		t.Skipf("gc-built packages not available (compiler = %s)", runtime.Compiler)
-	}
-
-	// On windows, we have to set the -D option for the compiler to avoid having a drive
-	// letter and an illegal ':' in the import path - just skip it (see also issue #3483).
-	if runtime.GOOS == "windows" {
-		t.Skip("avoid dealing with relative paths/drive letters on windows")
 	}
 
 	tmpdir := mktmpdir(t)
@@ -683,12 +651,6 @@ func TestIssue15517(t *testing.T) {
 		t.Skipf("gc-built packages not available (compiler = %s)", runtime.Compiler)
 	}
 
-	// On windows, we have to set the -D option for the compiler to avoid having a drive
-	// letter and an illegal ':' in the import path - just skip it (see also issue #3483).
-	if runtime.GOOS == "windows" {
-		t.Skip("avoid dealing with relative paths/drive letters on windows")
-	}
-
 	tmpdir := mktmpdir(t)
 	defer os.RemoveAll(tmpdir)
 
@@ -723,12 +685,6 @@ func TestIssue15920(t *testing.T) {
 		t.Skipf("gc-built packages not available (compiler = %s)", runtime.Compiler)
 	}
 
-	// On windows, we have to set the -D option for the compiler to avoid having a drive
-	// letter and an illegal ':' in the import path - just skip it (see also issue #3483).
-	if runtime.GOOS == "windows" {
-		t.Skip("avoid dealing with relative paths/drive letters on windows")
-	}
-
 	compileAndImportPkg(t, "issue15920")
 }
 
@@ -738,12 +694,6 @@ func TestIssue20046(t *testing.T) {
 	// This package only handles gc export data.
 	if runtime.Compiler != "gc" {
 		t.Skipf("gc-built packages not available (compiler = %s)", runtime.Compiler)
-	}
-
-	// On windows, we have to set the -D option for the compiler to avoid having a drive
-	// letter and an illegal ':' in the import path - just skip it (see also issue #3483).
-	if runtime.GOOS == "windows" {
-		t.Skip("avoid dealing with relative paths/drive letters on windows")
 	}
 
 	// "./issue20046".V.M must exist
@@ -761,12 +711,6 @@ func TestIssue25301(t *testing.T) {
 		t.Skipf("gc-built packages not available (compiler = %s)", runtime.Compiler)
 	}
 
-	// On windows, we have to set the -D option for the compiler to avoid having a drive
-	// letter and an illegal ':' in the import path - just skip it (see also issue #3483).
-	if runtime.GOOS == "windows" {
-		t.Skip("avoid dealing with relative paths/drive letters on windows")
-	}
-
 	compileAndImportPkg(t, "issue25301")
 }
 
@@ -778,12 +722,6 @@ func TestIssue25596(t *testing.T) {
 		t.Skipf("gc-built packages not available (compiler = %s)", runtime.Compiler)
 	}
 
-	// On windows, we have to set the -D option for the compiler to avoid having a drive
-	// letter and an illegal ':' in the import path - just skip it (see also issue #3483).
-	if runtime.GOOS == "windows" {
-		t.Skip("avoid dealing with relative paths/drive letters on windows")
-	}
-
 	compileAndImportPkg(t, "issue25596")
 }
 
@@ -793,12 +731,6 @@ func TestIssue57015(t *testing.T) {
 	// This package only handles gc export data.
 	if runtime.Compiler != "gc" {
 		t.Skipf("gc-built packages not available (compiler = %s)", runtime.Compiler)
-	}
-
-	// On windows, we have to set the -D option for the compiler to avoid having a drive
-	// letter and an illegal ':' in the import path - just skip it (see also issue #3483).
-	if runtime.GOOS == "windows" {
-		t.Skip("avoid dealing with relative paths/drive letters on windows")
 	}
 
 	compileAndImportPkg(t, "issue57015")
@@ -829,4 +761,69 @@ func lookupObj(t *testing.T, scope *types.Scope, name string) types.Object {
 	t.Helper()
 	t.Fatalf("%s not found", name)
 	return nil
+}
+
+// importMap implements the types.Importer interface.
+type importMap map[string]*types.Package
+
+func (m importMap) Import(path string) (*types.Package, error) { return m[path], nil }
+
+func TestIssue69912(t *testing.T) {
+	testenv.MustHaveGoBuild(t)
+
+	// This package only handles gc export data.
+	if runtime.Compiler != "gc" {
+		t.Skipf("gc-built packages not available (compiler = %s)", runtime.Compiler)
+	}
+
+	tmpdir := t.TempDir()
+	testoutdir := filepath.Join(tmpdir, "testdata")
+	if err := os.Mkdir(testoutdir, 0700); err != nil {
+		t.Fatalf("making output dir: %v", err)
+	}
+
+	compile(t, "testdata", "issue69912.go", testoutdir, nil)
+
+	fset := token.NewFileSet()
+
+	issue69912, err := Import(fset, make(map[string]*types.Package), "./testdata/issue69912", tmpdir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	check := func(pkgname, src string, imports importMap) (*types.Package, error) {
+		f, err := parser.ParseFile(fset, "a.go", src, 0)
+		if err != nil {
+			return nil, err
+		}
+		config := &types.Config{
+			Importer: imports,
+		}
+		return config.Check(pkgname, fset, []*ast.File{f}, nil)
+	}
+
+	// Use the resulting package concurrently, via dot-imports, to exercise the
+	// race of issue #69912.
+	const pSrc = `package p
+
+import . "issue69912"
+
+type S struct {
+	f T
+}
+`
+	importer := importMap{
+		"issue69912": issue69912,
+	}
+	var wg sync.WaitGroup
+	for range 10 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := check("p", pSrc, importer); err != nil {
+				t.Errorf("Check failed: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
 }

@@ -626,6 +626,30 @@ type item struct {
 	FieldA string
 }
 
+func TestIssue68387(t *testing.T) {
+	data := `<item b=']]>'/>`
+	dec := NewDecoder(strings.NewReader(data))
+	var tok1, tok2, tok3 Token
+	var err error
+	if tok1, err = dec.RawToken(); err != nil {
+		t.Fatalf("RawToken() failed: %v", err)
+	}
+	if tok2, err = dec.RawToken(); err != nil {
+		t.Fatalf("RawToken() failed: %v", err)
+	}
+	if tok3, err = dec.RawToken(); err != io.EOF || tok3 != nil {
+		t.Fatalf("Missed EOF")
+	}
+	s := StartElement{Name{"", "item"}, []Attr{Attr{Name{"","b"}, "]]>"}}}
+	if !reflect.DeepEqual(tok1.(StartElement), s) {
+		t.Error("Wrong start element")
+	}
+	e := EndElement{Name{"","item"}}
+	if tok2.(EndElement) != e {
+		t.Error("Wrong end element")
+	}
+}
+
 func TestIssue569(t *testing.T) {
 	data := `<item><FieldA>abcd</FieldA></item>`
 	var i item
@@ -830,6 +854,13 @@ var procInstTests = []struct {
 	{`version="1.0" encoding='utf-8' `, [2]string{"1.0", "utf-8"}},
 	{`version="1.0" encoding=utf-8`, [2]string{"1.0", ""}},
 	{`encoding="FOO" `, [2]string{"", "FOO"}},
+	{`version=2.0 version="1.0" encoding=utf-7 encoding='utf-8'`, [2]string{"1.0", "utf-8"}},
+	{`version= encoding=`, [2]string{"", ""}},
+	{`encoding="version=1.0"`, [2]string{"", "version=1.0"}},
+	{``, [2]string{"", ""}},
+	// TODO: what's the right approach to handle these nested cases?
+	{`encoding="version='1.0'"`, [2]string{"1.0", "version='1.0'"}},
+	{`version="encoding='utf-8'"`, [2]string{"encoding='utf-8'", "utf-8"}},
 }
 
 func TestProcInstEncoding(t *testing.T) {
@@ -1059,6 +1090,61 @@ func TestIssue12417(t *testing.T) {
 	}
 }
 
+func TestIssue7113(t *testing.T) {
+	type C struct {
+		XMLName Name `xml:""` // Sets empty namespace
+	}
+
+	type D struct {
+		XMLName Name `xml:"d"`
+	}
+
+	type A struct {
+		XMLName Name `xml:""`
+		C       C    `xml:""`
+		D       D
+	}
+
+	var a A
+	structSpace := "b"
+	xmlTest := `<A xmlns="` + structSpace + `"><C xmlns=""></C><d></d></A>`
+	t.Log(xmlTest)
+	err := Unmarshal([]byte(xmlTest), &a)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if a.XMLName.Space != structSpace {
+		t.Errorf("overidding with empty namespace: unmarshaling, got %s, want %s\n", a.XMLName.Space, structSpace)
+	}
+	if len(a.C.XMLName.Space) != 0 {
+		t.Fatalf("overidding with empty namespace: unmarshaling, got %s, want empty\n", a.C.XMLName.Space)
+	}
+
+	var b []byte
+	b, err = Marshal(&a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(a.C.XMLName.Space) != 0 {
+		t.Errorf("overidding with empty namespace: marshaling, got %s in C tag which should be empty\n", a.C.XMLName.Space)
+	}
+	if string(b) != xmlTest {
+		t.Fatalf("overidding with empty namespace: marshaling, got %s, want %s\n", b, xmlTest)
+	}
+	var c A
+	err = Unmarshal(b, &c)
+	if err != nil {
+		t.Fatalf("second Unmarshal failed: %s", err)
+	}
+	if c.XMLName.Space != "b" {
+		t.Errorf("overidding with empty namespace: after marshaling & unmarshaling, XML name space: got %s, want %s\n", a.XMLName.Space, structSpace)
+	}
+	if len(c.C.XMLName.Space) != 0 {
+		t.Errorf("overidding with empty namespace: after marshaling & unmarshaling, got %s, want empty\n", a.C.XMLName.Space)
+	}
+}
+
 func TestIssue20396(t *testing.T) {
 
 	var attrError = UnmarshalError("XML syntax error on line 1: expected attribute name in element")
@@ -1284,6 +1370,8 @@ func TestParseErrors(t *testing.T) {
 		{withDefaultHeader(`<!- not ok -->`), `invalid sequence <!- not part of <!--`},
 		{withDefaultHeader(`<!-? not ok -->`), `invalid sequence <!- not part of <!--`},
 		{withDefaultHeader(`<![not ok]>`), `invalid <![ sequence`},
+		{withDefaultHeader(`<zzz:foo xmlns:zzz="http://example.com"><bar>baz</bar></foo>`),
+			`element <foo> in space zzz closed by </foo> in space ""`},
 		{withDefaultHeader("\xf1"), `invalid UTF-8`},
 
 		// Header-related errors.
@@ -1309,12 +1397,13 @@ func TestParseErrors(t *testing.T) {
 			}
 			continue
 		}
-		if err == nil || err == io.EOF {
-			t.Errorf("parse %s: have no error, expected a non-nil error", test.src)
+		// Inv: err != nil
+		if err == io.EOF {
+			t.Errorf("parse %s: unexpected EOF", test.src)
 			continue
 		}
 		if !strings.Contains(err.Error(), test.err) {
-			t.Errorf("parse %s: can't find %q error sudbstring\nerror: %q", test.src, test.err, err)
+			t.Errorf("parse %s: can't find %q error substring\nerror: %q", test.src, test.err, err)
 			continue
 		}
 	}

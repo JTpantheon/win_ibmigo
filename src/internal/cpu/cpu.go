@@ -6,6 +6,8 @@
 // used by the Go standard library.
 package cpu
 
+import _ "unsafe" // for linkname
+
 // DebugOptions is set to true by the runtime if the OS supports reading
 // GODEBUG early in runtime startup.
 // This should not be changed after it is initialized.
@@ -29,9 +31,13 @@ var X86 struct {
 	HasADX       bool
 	HasAVX       bool
 	HasAVX2      bool
+	HasAVX512F   bool
+	HasAVX512BW  bool
+	HasAVX512VL  bool
 	HasBMI1      bool
 	HasBMI2      bool
 	HasERMS      bool
+	HasFSRM      bool
 	HasFMA       bool
 	HasOSXSAVE   bool
 	HasPCLMULQDQ bool
@@ -48,27 +54,39 @@ var X86 struct {
 // The booleans in ARM contain the correspondingly named cpu feature bit.
 // The struct is padded to avoid false sharing.
 var ARM struct {
-	_        CacheLinePad
-	HasVFPv4 bool
-	HasIDIVA bool
-	_        CacheLinePad
+	_            CacheLinePad
+	HasVFPv4     bool
+	HasIDIVA     bool
+	HasV7Atomics bool
+	_            CacheLinePad
 }
 
 // The booleans in ARM64 contain the correspondingly named cpu feature bit.
 // The struct is padded to avoid false sharing.
 var ARM64 struct {
-	_            CacheLinePad
-	HasAES       bool
-	HasPMULL     bool
-	HasSHA1      bool
-	HasSHA2      bool
-	HasSHA512    bool
-	HasCRC32     bool
-	HasATOMICS   bool
-	HasCPUID     bool
-	IsNeoverseN1 bool
-	IsNeoverseV1 bool
-	_            CacheLinePad
+	_          CacheLinePad
+	HasAES     bool
+	HasPMULL   bool
+	HasSHA1    bool
+	HasSHA2    bool
+	HasSHA512  bool
+	HasCRC32   bool
+	HasATOMICS bool
+	HasCPUID   bool
+	HasDIT     bool
+	IsNeoverse bool
+	_          CacheLinePad
+}
+
+// The booleans in Loong64 contain the correspondingly named cpu feature bit.
+// The struct is padded to avoid false sharing.
+var Loong64 struct {
+	_         CacheLinePad
+	HasLSX    bool // support 128-bit vector extension
+	HasCRC32  bool // support CRC instruction
+	HasLAMCAS bool // support AMCAS[_DB].{B/H/W/D}
+	HasLAM_BH bool // support AM{SWAP/ADD}[_DB].{B/H} instruction
+	_         CacheLinePad
 }
 
 var MIPS64X struct {
@@ -117,6 +135,15 @@ var S390X struct {
 	HasEDDSA  bool // Edwards curves
 	_         CacheLinePad
 }
+
+// CPU feature variables are accessed by assembly code in various packages.
+//go:linkname X86
+//go:linkname ARM
+//go:linkname ARM64
+//go:linkname Loong64
+//go:linkname MIPS64X
+//go:linkname PPC64
+//go:linkname S390X
 
 // Initialize examines the processor and sets the relevant variables above.
 // This is called by the runtime package early in program initialization,
@@ -213,6 +240,8 @@ field:
 
 // indexByte returns the index of the first instance of c in s,
 // or -1 if c is not present in s.
+// indexByte is semantically the same as [strings.IndexByte].
+// We copy this function because "internal/cpu" should not have external dependencies.
 func indexByte(s string, c byte) int {
 	for i := 0; i < len(s); i++ {
 		if s[i] == c {

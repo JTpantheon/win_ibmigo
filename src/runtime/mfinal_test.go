@@ -5,6 +5,7 @@
 package runtime_test
 
 import (
+	"internal/asan"
 	"runtime"
 	"testing"
 	"time"
@@ -21,10 +22,6 @@ type Tinter interface {
 }
 
 func TestFinalizerType(t *testing.T) {
-	if runtime.GOARCH != "amd64" {
-		t.Skipf("Skipping on non-amd64 machine")
-	}
-
 	ch := make(chan bool, 10)
 	finalize := func(x *int) {
 		if *x != 97531 {
@@ -82,9 +79,6 @@ type bigValue struct {
 }
 
 func TestFinalizerInterfaceBig(t *testing.T) {
-	if runtime.GOARCH != "amd64" {
-		t.Skipf("Skipping on non-amd64 machine")
-	}
 	ch := make(chan bool)
 	done := make(chan bool, 1)
 	go func() {
@@ -172,6 +166,9 @@ func adjChunks() (*objtype, *objtype) {
 
 // Make sure an empty slice on the stack doesn't pin the next object in memory.
 func TestEmptySlice(t *testing.T) {
+	if asan.Enabled {
+		t.Skip("skipping with -asan: test assumes exact size class alignment, but asan redzone breaks that assumption")
+	}
 	x, y := adjChunks()
 
 	// the pointer inside xs points to y.
@@ -201,6 +198,9 @@ func adjStringChunk() (string, *objtype) {
 
 // Make sure an empty string on the stack doesn't pin the next object in memory.
 func TestEmptyString(t *testing.T) {
+	if asan.Enabled {
+		t.Skip("skipping with -asan: test assumes exact size class alignment, but asan redzone breaks that assumption")
+	}
 	x, y := adjStringChunk()
 
 	ss := x[objsize:] // change objsize to objsize-1 and the test passes

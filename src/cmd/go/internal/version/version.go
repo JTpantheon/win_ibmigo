@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"cmd/go/internal/base"
+	"cmd/go/internal/gover"
 )
 
 var CmdVersion = &base.Command{
@@ -73,7 +74,11 @@ func runVersion(ctx context.Context, cmd *base.Command, args []string) {
 			base.SetExitStatus(2)
 			return
 		}
-		fmt.Printf("go version %s %s/%s\n", runtime.Version(), runtime.GOOS, runtime.GOARCH)
+		v := runtime.Version()
+		if gover.TestVersion != "" {
+			v = gover.TestVersion + " (TESTGO_VERSION)"
+		}
+		fmt.Printf("go version %s %s/%s\n", v, runtime.GOOS, runtime.GOARCH)
 		return
 	}
 
@@ -87,7 +92,10 @@ func runVersion(ctx context.Context, cmd *base.Command, args []string) {
 		if info.IsDir() {
 			scanDir(arg)
 		} else {
-			scanFile(arg, info, true)
+			ok := scanFile(arg, info, true)
+			if !ok && *versionM {
+				base.SetExitStatus(1)
+			}
 		}
 	}
 }
@@ -127,7 +135,8 @@ func isGoBinaryCandidate(file string, info fs.FileInfo) bool {
 // If mustPrint is true, scanFile will report any error reading file.
 // Otherwise (mustPrint is false, because scanFile is being called
 // by scanDir) scanFile prints nothing for non-Go binaries.
-func scanFile(file string, info fs.FileInfo, mustPrint bool) {
+// scanFile reports whether the file is a Go binary.
+func scanFile(file string, info fs.FileInfo, mustPrint bool) bool {
 	if info.Mode()&fs.ModeSymlink != 0 {
 		// Accept file symlinks only.
 		i, err := os.Stat(file)
@@ -135,7 +144,7 @@ func scanFile(file string, info fs.FileInfo, mustPrint bool) {
 			if mustPrint {
 				fmt.Fprintf(os.Stderr, "%s: symlink\n", file)
 			}
-			return
+			return false
 		}
 		info = i
 	}
@@ -156,7 +165,7 @@ func scanFile(file string, info fs.FileInfo, mustPrint bool) {
 				}
 			}
 		}
-		return
+		return false
 	}
 
 	fmt.Printf("%s: %s\n", file, bi.GoVersion)
@@ -165,4 +174,5 @@ func scanFile(file string, info fs.FileInfo, mustPrint bool) {
 	if *versionM && len(mod) > 0 {
 		fmt.Printf("\t%s\n", strings.ReplaceAll(mod[:len(mod)-1], "\n", "\n\t"))
 	}
+	return true
 }

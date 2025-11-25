@@ -60,13 +60,6 @@ func pedanticReadAll(r io.Reader) (b []byte, err error) {
 	}
 }
 
-type chanWriter chan string
-
-func (w chanWriter) Write(p []byte) (n int, err error) {
-	w <- string(p)
-	return len(p), nil
-}
-
 func TestClient(t *testing.T) { run(t, testClient) }
 func testClient(t *testing.T, mode testMode) {
 	ts := newClientServerTest(t, mode, robotsTxtHandler).ts
@@ -353,7 +346,7 @@ func TestPostRedirects(t *testing.T) {
 		`POST /?code=307&next=303,308,302 "c307"`,
 		`POST /?code=303&next=308,302 "c307"`,
 		`GET /?code=308&next=302 ""`,
-		`GET /?code=302 "c307"`,
+		`GET /?code=302 ""`,
 		`GET / ""`,
 		`POST /?code=308&next=302,301 "c308"`,
 		`POST /?code=302&next=301 "c308"`,
@@ -383,7 +376,7 @@ func TestDeleteRedirects(t *testing.T) {
 		`DELETE /?code=301&next=302,308 "c301"`,
 		`GET /?code=302&next=308 ""`,
 		`GET /?code=308 ""`,
-		`GET / "c301"`,
+		`GET / ""`,
 		`DELETE /?code=302&next=302 "c302"`,
 		`GET /?code=302 ""`,
 		`GET / ""`,
@@ -392,7 +385,7 @@ func TestDeleteRedirects(t *testing.T) {
 		`DELETE /?code=307&next=301,308,303,302,304 "c307"`,
 		`DELETE /?code=301&next=308,303,302,304 "c307"`,
 		`GET /?code=308&next=303,302,304 ""`,
-		`GET /?code=303&next=302,304 "c307"`,
+		`GET /?code=303&next=302,304 ""`,
 		`GET /?code=302&next=304 ""`,
 		`GET /?code=304 ""`,
 		`DELETE /?code=308&next=307 "c308"`,
@@ -758,7 +751,7 @@ func testStreamingGet(t *testing.T, mode testMode) {
 	var buf [10]byte
 	for _, str := range []string{"i", "am", "also", "known", "as", "comet"} {
 		say <- str
-		n, err := io.ReadFull(res.Body, buf[0:len(str)])
+		n, err := io.ReadFull(res.Body, buf[:len(str)])
 		if err != nil {
 			t.Fatalf("ReadFull on %q: %v", str, err)
 		}
@@ -827,12 +820,12 @@ func TestClientInsecureTransport(t *testing.T) {
 	run(t, testClientInsecureTransport, []testMode{https1Mode, http2Mode})
 }
 func testClientInsecureTransport(t *testing.T, mode testMode) {
-	ts := newClientServerTest(t, mode, HandlerFunc(func(w ResponseWriter, r *Request) {
+	cst := newClientServerTest(t, mode, HandlerFunc(func(w ResponseWriter, r *Request) {
 		w.Write([]byte("Hello"))
-	})).ts
-	errc := make(chanWriter, 10) // but only expecting 1
-	ts.Config.ErrorLog = log.New(errc, "", 0)
-	defer ts.Close()
+	}))
+	ts := cst.ts
+	errLog := new(strings.Builder)
+	ts.Config.ErrorLog = log.New(errLog, "", 0)
 
 	// TODO(bradfitz): add tests for skipping hostname checks too?
 	// would require a new cert for testing, and probably
@@ -851,15 +844,10 @@ func testClientInsecureTransport(t *testing.T, mode testMode) {
 		}
 	}
 
-	select {
-	case v := <-errc:
-		if !strings.Contains(v, "TLS handshake error") {
-			t.Errorf("expected an error log message containing 'TLS handshake error'; got %q", v)
-		}
-	case <-time.After(5 * time.Second):
-		t.Errorf("timeout waiting for logged error")
+	cst.close()
+	if !strings.Contains(errLog.String(), "TLS handshake error") {
+		t.Errorf("expected an error log message containing 'TLS handshake error'; got %q", errLog)
 	}
-
 }
 
 func TestClientErrorWithRequestURI(t *testing.T) {
@@ -897,9 +885,10 @@ func TestClientWithIncorrectTLSServerName(t *testing.T) {
 	run(t, testClientWithIncorrectTLSServerName, []testMode{https1Mode, http2Mode})
 }
 func testClientWithIncorrectTLSServerName(t *testing.T, mode testMode) {
-	ts := newClientServerTest(t, mode, HandlerFunc(func(w ResponseWriter, r *Request) {})).ts
-	errc := make(chanWriter, 10) // but only expecting 1
-	ts.Config.ErrorLog = log.New(errc, "", 0)
+	cst := newClientServerTest(t, mode, HandlerFunc(func(w ResponseWriter, r *Request) {}))
+	ts := cst.ts
+	errLog := new(strings.Builder)
+	ts.Config.ErrorLog = log.New(errLog, "", 0)
 
 	c := ts.Client()
 	c.Transport.(*Transport).TLSClientConfig.ServerName = "badserver"
@@ -910,13 +899,10 @@ func testClientWithIncorrectTLSServerName(t *testing.T, mode testMode) {
 	if !strings.Contains(err.Error(), "127.0.0.1") || !strings.Contains(err.Error(), "badserver") {
 		t.Errorf("wanted error mentioning 127.0.0.1 and badserver; got error: %v", err)
 	}
-	select {
-	case v := <-errc:
-		if !strings.Contains(v, "TLS handshake error") {
-			t.Errorf("expected an error log message containing 'TLS handshake error'; got %q", v)
-		}
-	case <-time.After(5 * time.Second):
-		t.Errorf("timeout waiting for logged error")
+
+	cst.close()
+	if !strings.Contains(errLog.String(), "TLS handshake error") {
+		t.Errorf("expected an error log message containing 'TLS handshake error'; got %q", errLog)
 	}
 }
 
@@ -960,7 +946,7 @@ func testResponseSetsTLSConnectionState(t *testing.T, mode testMode) {
 
 	c := ts.Client()
 	tr := c.Transport.(*Transport)
-	tr.TLSClientConfig.CipherSuites = []uint16{tls.TLS_RSA_WITH_3DES_EDE_CBC_SHA}
+	tr.TLSClientConfig.CipherSuites = []uint16{tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256}
 	tr.TLSClientConfig.MaxVersion = tls.VersionTLS12 // to get to pick the cipher suite
 	tr.Dial = func(netw, addr string) (net.Conn, error) {
 		return net.Dial(netw, ts.Listener.Addr().String())
@@ -973,7 +959,7 @@ func testResponseSetsTLSConnectionState(t *testing.T, mode testMode) {
 	if res.TLS == nil {
 		t.Fatal("Response didn't set TLS Connection State.")
 	}
-	if got, want := res.TLS.CipherSuite, tls.TLS_RSA_WITH_3DES_EDE_CBC_SHA; got != want {
+	if got, want := res.TLS.CipherSuite, tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256; got != want {
 		t.Errorf("TLS Cipher Suite = %d; want %d", got, want)
 	}
 }
@@ -1207,7 +1193,7 @@ func testClientTimeout(t *testing.T, mode testMode) {
 	}))
 
 	// Try to trigger a timeout after reading part of the response body.
-	// The initial timeout is emprically usually long enough on a decently fast
+	// The initial timeout is empirically usually long enough on a decently fast
 	// machine, but if we undershoot we'll retry with exponentially longer
 	// timeouts until the test either passes or times out completely.
 	// This keeps the test reasonably fast in the typical case but allows it to
@@ -1263,6 +1249,9 @@ func testClientTimeout(t *testing.T, mode testMode) {
 		} else if !ne.Timeout() {
 			t.Errorf("net.Error.Timeout = false; want true")
 		}
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("ReadAll error = %q; expected some context.DeadlineExceeded", err)
+		}
 		if got := ne.Error(); !strings.Contains(got, "(Client.Timeout") {
 			if runtime.GOOS == "windows" && strings.HasPrefix(runtime.GOARCH, "arm") {
 				testenv.SkipFlaky(t, 43120)
@@ -1305,6 +1294,9 @@ func testClientTimeout_Headers(t *testing.T, mode testMode) {
 	}
 	if !ne.Timeout() {
 		t.Error("net.Error.Timeout = false; want true")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("ReadAll error = %q; expected some context.DeadlineExceeded", err)
 	}
 	if got := ne.Error(); !strings.Contains(got, "Client.Timeout exceeded") {
 		if runtime.GOOS == "windows" && strings.HasPrefix(runtime.GOARCH, "arm") {
@@ -1411,24 +1403,32 @@ func (f eofReaderFunc) Read(p []byte) (n int, err error) {
 
 func TestReferer(t *testing.T) {
 	tests := []struct {
-		lastReq, newReq string // from -> to URLs
-		want            string
+		lastReq, newReq, explicitRef string // from -> to URLs, explicitly set Referer value
+		want                         string
 	}{
 		// don't send user:
-		{"http://gopher@test.com", "http://link.com", "http://test.com"},
-		{"https://gopher@test.com", "https://link.com", "https://test.com"},
+		{lastReq: "http://gopher@test.com", newReq: "http://link.com", want: "http://test.com"},
+		{lastReq: "https://gopher@test.com", newReq: "https://link.com", want: "https://test.com"},
 
 		// don't send a user and password:
-		{"http://gopher:go@test.com", "http://link.com", "http://test.com"},
-		{"https://gopher:go@test.com", "https://link.com", "https://test.com"},
+		{lastReq: "http://gopher:go@test.com", newReq: "http://link.com", want: "http://test.com"},
+		{lastReq: "https://gopher:go@test.com", newReq: "https://link.com", want: "https://test.com"},
 
 		// nothing to do:
-		{"http://test.com", "http://link.com", "http://test.com"},
-		{"https://test.com", "https://link.com", "https://test.com"},
+		{lastReq: "http://test.com", newReq: "http://link.com", want: "http://test.com"},
+		{lastReq: "https://test.com", newReq: "https://link.com", want: "https://test.com"},
 
 		// https to http doesn't send a referer:
-		{"https://test.com", "http://link.com", ""},
-		{"https://gopher:go@test.com", "http://link.com", ""},
+		{lastReq: "https://test.com", newReq: "http://link.com", want: ""},
+		{lastReq: "https://gopher:go@test.com", newReq: "http://link.com", want: ""},
+
+		// https to http should remove an existing referer:
+		{lastReq: "https://test.com", newReq: "http://link.com", explicitRef: "https://foo.com", want: ""},
+		{lastReq: "https://gopher:go@test.com", newReq: "http://link.com", explicitRef: "https://foo.com", want: ""},
+
+		// don't override an existing referer:
+		{lastReq: "https://test.com", newReq: "https://link.com", explicitRef: "https://foo.com", want: "https://foo.com"},
+		{lastReq: "https://gopher:go@test.com", newReq: "https://link.com", explicitRef: "https://foo.com", want: "https://foo.com"},
 	}
 	for _, tt := range tests {
 		l, err := url.Parse(tt.lastReq)
@@ -1439,7 +1439,7 @@ func TestReferer(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		r := ExportRefererForURL(l, n)
+		r := ExportRefererForURL(l, n, tt.explicitRef)
 		if r != tt.want {
 			t.Errorf("refererForURL(%q, %q) = %q; want %q", tt.lastReq, tt.newReq, r, tt.want)
 		}
@@ -1470,6 +1470,9 @@ func TestClientRedirectResponseWithoutRequest(t *testing.T) {
 }
 
 // Issue 4800: copy (some) headers when Client follows a redirect.
+// Issue 35104: Since both URLs have the same host (localhost)
+// but different ports, sensitive headers like Cookie and Authorization
+// are preserved.
 func TestClientCopyHeadersOnRedirect(t *testing.T) { run(t, testClientCopyHeadersOnRedirect) }
 func testClientCopyHeadersOnRedirect(t *testing.T, mode testMode) {
 	const (
@@ -1483,6 +1486,8 @@ func testClientCopyHeadersOnRedirect(t *testing.T, mode testMode) {
 			"X-Foo":           []string{xfoo},
 			"Referer":         []string{ts2URL},
 			"Accept-Encoding": []string{"gzip"},
+			"Cookie":          []string{"foo=bar"},
+			"Authorization":   []string{"secretpassword"},
 		}
 		if !reflect.DeepEqual(r.Header, want) {
 			t.Errorf("Request.Header = %#v; want %#v", r.Header, want)
@@ -1501,9 +1506,11 @@ func testClientCopyHeadersOnRedirect(t *testing.T, mode testMode) {
 	c := ts1.Client()
 	c.CheckRedirect = func(r *Request, via []*Request) error {
 		want := Header{
-			"User-Agent": []string{ua},
-			"X-Foo":      []string{xfoo},
-			"Referer":    []string{ts2URL},
+			"User-Agent":    []string{ua},
+			"X-Foo":         []string{xfoo},
+			"Referer":       []string{ts2URL},
+			"Cookie":        []string{"foo=bar"},
+			"Authorization": []string{"secretpassword"},
 		}
 		if !reflect.DeepEqual(r.Header, want) {
 			t.Errorf("CheckRedirect Request.Header = %#v; want %#v", r.Header, want)
@@ -1526,6 +1533,58 @@ func testClientCopyHeadersOnRedirect(t *testing.T, mode testMode) {
 	}
 	if got := res.Header.Get("Result"); got != "ok" {
 		t.Errorf("result = %q; want ok", got)
+	}
+}
+
+// Issue #70530: Once we strip a header on a redirect to a different host,
+// the header should stay stripped across any further redirects.
+func TestClientStripHeadersOnRepeatedRedirect(t *testing.T) {
+	run(t, testClientStripHeadersOnRepeatedRedirect)
+}
+func testClientStripHeadersOnRepeatedRedirect(t *testing.T, mode testMode) {
+	var proto string
+	ts := newClientServerTest(t, mode, HandlerFunc(func(w ResponseWriter, r *Request) {
+		if r.Host+r.URL.Path != "a.example.com/" {
+			if h := r.Header.Get("Authorization"); h != "" {
+				t.Errorf("on request to %v%v, Authorization=%q, want no header", r.Host, r.URL.Path, h)
+			} else if h := r.Header.Get("Proxy-Authorization"); h != "" {
+				t.Errorf("on request to %v%v, Proxy-Authorization=%q, want no header", r.Host, r.URL.Path, h)
+			}
+		}
+		// Follow a chain of redirects from a to b and back to a.
+		// The Authorization header is stripped on the first redirect to b,
+		// and stays stripped even if we're sent back to a.
+		switch r.Host + r.URL.Path {
+		case "a.example.com/":
+			Redirect(w, r, proto+"://b.example.com/", StatusFound)
+		case "b.example.com/":
+			Redirect(w, r, proto+"://b.example.com/redirect", StatusFound)
+		case "b.example.com/redirect":
+			Redirect(w, r, proto+"://a.example.com/redirect", StatusFound)
+		case "a.example.com/redirect":
+			w.Header().Set("X-Done", "true")
+		default:
+			t.Errorf("unexpected request to %v", r.URL)
+		}
+	})).ts
+	proto, _, _ = strings.Cut(ts.URL, ":")
+
+	c := ts.Client()
+	c.Transport.(*Transport).Dial = func(_ string, _ string) (net.Conn, error) {
+		return net.Dial("tcp", ts.Listener.Addr().String())
+	}
+
+	req, _ := NewRequest("GET", proto+"://a.example.com/", nil)
+	req.Header.Add("Cookie", "foo=bar")
+	req.Header.Add("Authorization", "secretpassword")
+	req.Header.Add("Proxy-Authorization", "secretpassword")
+	res, err := c.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.Header.Get("X-Done") != "true" {
+		t.Fatalf("response missing expected header: X-Done=true")
 	}
 }
 
@@ -1695,30 +1754,39 @@ func testClientAltersCookiesOnRedirect(t *testing.T, mode testMode) {
 // Part of Issue 4800
 func TestShouldCopyHeaderOnRedirect(t *testing.T) {
 	tests := []struct {
-		header     string
 		initialURL string
 		destURL    string
 		want       bool
 	}{
-		{"User-Agent", "http://foo.com/", "http://bar.com/", true},
-		{"X-Foo", "http://foo.com/", "http://bar.com/", true},
-
 		// Sensitive headers:
-		{"cookie", "http://foo.com/", "http://bar.com/", false},
-		{"cookie2", "http://foo.com/", "http://bar.com/", false},
-		{"authorization", "http://foo.com/", "http://bar.com/", false},
-		{"www-authenticate", "http://foo.com/", "http://bar.com/", false},
+		{"http://foo.com/", "http://bar.com/", false},
+		{"http://foo.com/", "http://bar.com/", false},
+		{"http://foo.com/", "http://bar.com/", false},
+		{"http://foo.com/", "https://foo.com/", true},
+		{"http://foo.com:1234/", "http://foo.com:4321/", true},
+		{"http://foo.com/", "http://bar.com/", false},
+		{"http://foo.com/", "http://[::1%25.foo.com]/", false},
 
 		// But subdomains should work:
-		{"www-authenticate", "http://foo.com/", "http://foo.com/", true},
-		{"www-authenticate", "http://foo.com/", "http://sub.foo.com/", true},
-		{"www-authenticate", "http://foo.com/", "http://notfoo.com/", false},
-		{"www-authenticate", "http://foo.com/", "https://foo.com/", false},
-		{"www-authenticate", "http://foo.com:80/", "http://foo.com/", true},
-		{"www-authenticate", "http://foo.com:80/", "http://sub.foo.com/", true},
-		{"www-authenticate", "http://foo.com:443/", "https://foo.com/", true},
-		{"www-authenticate", "http://foo.com:443/", "https://sub.foo.com/", true},
-		{"www-authenticate", "http://foo.com:1234/", "http://foo.com/", false},
+		{"http://foo.com/", "http://foo.com/", true},
+		{"http://foo.com/", "http://sub.foo.com/", true},
+		{"http://foo.com/", "http://notfoo.com/", false},
+		{"http://foo.com/", "https://foo.com/", true},
+		{"http://foo.com:80/", "http://foo.com/", true},
+		{"http://foo.com:80/", "http://sub.foo.com/", true},
+		{"http://foo.com:443/", "https://foo.com/", true},
+		{"http://foo.com:443/", "https://sub.foo.com/", true},
+		{"http://foo.com:1234/", "http://foo.com/", true},
+
+		{"http://foo.com/", "http://foo.com/", true},
+		{"http://foo.com/", "http://sub.foo.com/", true},
+		{"http://foo.com/", "http://notfoo.com/", false},
+		{"http://foo.com/", "https://foo.com/", true},
+		{"http://foo.com:80/", "http://foo.com/", true},
+		{"http://foo.com:80/", "http://sub.foo.com/", true},
+		{"http://foo.com:443/", "https://foo.com/", true},
+		{"http://foo.com:443/", "https://sub.foo.com/", true},
+		{"http://foo.com:1234/", "http://foo.com/", true},
 	}
 	for i, tt := range tests {
 		u0, err := url.Parse(tt.initialURL)
@@ -1731,10 +1799,10 @@ func TestShouldCopyHeaderOnRedirect(t *testing.T) {
 			t.Errorf("%d. dest URL %q parse error: %v", i, tt.destURL, err)
 			continue
 		}
-		got := Export_shouldCopyHeaderOnRedirect(tt.header, u0, u1)
+		got := Export_shouldCopyHeaderOnRedirect(u0, u1)
 		if got != tt.want {
-			t.Errorf("%d. shouldCopyHeaderOnRedirect(%q, %q => %q) = %v; want %v",
-				i, tt.header, tt.initialURL, tt.destURL, got, tt.want)
+			t.Errorf("%d. shouldCopyHeaderOnRedirect(%q => %q) = %v; want %v",
+				i, tt.initialURL, tt.destURL, got, tt.want)
 		}
 	}
 }
@@ -1918,21 +1986,25 @@ func TestClientCloseIdleConnections(t *testing.T) {
 	}
 }
 
+type testRoundTripper func(*Request) (*Response, error)
+
+func (t testRoundTripper) RoundTrip(req *Request) (*Response, error) {
+	return t(req)
+}
+
 func TestClientPropagatesTimeoutToContext(t *testing.T) {
-	errDial := errors.New("not actually dialing")
 	c := &Client{
 		Timeout: 5 * time.Second,
-		Transport: &Transport{
-			DialContext: func(ctx context.Context, netw, addr string) (net.Conn, error) {
-				deadline, ok := ctx.Deadline()
-				if !ok {
-					t.Error("no deadline")
-				} else {
-					t.Logf("deadline in %v", deadline.Sub(time.Now()).Round(time.Second/10))
-				}
-				return nil, errDial
-			},
-		},
+		Transport: testRoundTripper(func(req *Request) (*Response, error) {
+			ctx := req.Context()
+			deadline, ok := ctx.Deadline()
+			if !ok {
+				t.Error("no deadline")
+			} else {
+				t.Logf("deadline in %v", deadline.Sub(time.Now()).Round(time.Second/10))
+			}
+			return nil, errors.New("not actually making a request")
+		}),
 	}
 	c.Get("https://example.tld/")
 }
@@ -1978,6 +2050,9 @@ func testClientDoCanceledVsTimeout(t *testing.T, mode testMode) {
 			}
 			if g, w := ue.Err, wantErr; g != w {
 				t.Errorf("url.Error.Err = %v; want %v", g, w)
+			}
+			if got := errors.Is(err, context.DeadlineExceeded); got != wantIsTimeout {
+				t.Errorf("errors.Is(err, context.DeadlineExceeded) = %v, want %v", got, wantIsTimeout)
 			}
 		})
 	}

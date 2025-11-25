@@ -6,10 +6,10 @@ package x509
 
 // Possible certificate files; stop after finding one.
 var certFiles = []string{
-	"/QOpenSys/var/lib/ca-certificates/ca-bundle.pem",
+	"/var/ssl/certs/ca-bundle.crt",
 }
 
 // Possible directories with certificate files; all will be read.
 var certDirectories = []string{
-	"/QOpenSys/var/lib/ca-certificates",
+	"/var/ssl/certs",
 }

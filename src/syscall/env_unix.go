@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build unix || (js && wasm) || plan9
+//go:build unix || (js && wasm) || plan9 || wasip1
 
 // Unix environment variables.
 
@@ -124,7 +124,7 @@ func Setenv(key, value string) error {
 }
 
 func Clearenv() {
-	envOnce.Do(copyenv) // prevent copyenv in Getenv/Setenv
+	envOnce.Do(copyenv)
 
 	envLock.Lock()
 	defer envLock.Unlock()

@@ -24,6 +24,7 @@ const (
 	_MADV_FREE       = 0x8
 	_MADV_HUGEPAGE   = 0xe
 	_MADV_NOHUGEPAGE = 0xf
+	_MADV_COLLAPSE   = 0x19
 
 	_SA_RESTART  = 0x10000000
 	_SA_ONSTACK  = 0x8000000
@@ -183,6 +184,7 @@ type sigcontext struct {
 	sc_pc         uint64
 	sc_regs       [32]uint64
 	sc_flags      uint32
+	sc_pad0       [1]uint32
 	sc_extcontext [0]uint64
 }
 

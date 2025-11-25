@@ -5,7 +5,8 @@
 // This program generates Go code that applies rewrite rules to a Value.
 // The generated code implements a function of type func (v *Value) bool
 // which reports whether if did something.
-// Ideas stolen from Swift: http://www.hpl.hp.com/techreports/Compaq-DEC/WRL-2000-2.html
+// Ideas stolen from the Swift Java compiler:
+// https://bitsavers.org/pdf/dec/tech_reports/WRL-2000-2.pdf
 
 package main
 
@@ -576,16 +577,17 @@ func fprint(w io.Writer, n Node) {
 	case *File:
 		file := n
 		seenRewrite := make(map[[3]string]string)
-		fmt.Fprintf(w, "// Code generated from _gen/%s%s.rules; DO NOT EDIT.\n", n.Arch.name, n.Suffix)
-		fmt.Fprintf(w, "// generated with: cd _gen; go run .\n")
+		fmt.Fprintf(w, "// Code generated from _gen/%s%s.rules using 'go generate'; DO NOT EDIT.\n", n.Arch.name, n.Suffix)
 		fmt.Fprintf(w, "\npackage ssa\n")
 		for _, path := range append([]string{
 			"fmt",
 			"internal/buildcfg",
 			"math",
+			"math/bits",
 			"cmd/internal/obj",
 			"cmd/compile/internal/base",
 			"cmd/compile/internal/types",
+			"cmd/compile/internal/ir",
 		}, n.Arch.imports...) {
 			fmt.Fprintf(w, "import %q\n", path)
 		}
@@ -1400,7 +1402,7 @@ func parseValue(val string, arch arch, loc string) (op opData, oparch, typ, auxi
 	if op.name == "" {
 		// Failed to find the op.
 		// Run through everything again with strict=false
-		// to generate useful diagnosic messages before failing.
+		// to generate useful diagnostic messages before failing.
 		for _, x := range genericOps {
 			match(x, false, "generic")
 		}
