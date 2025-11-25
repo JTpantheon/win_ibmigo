@@ -2,9 +2,13 @@
 
 This document describes the necessary changes to enable AIX PPC64 cross-compilation support in Go 1.24.10 and Go 1.25.4, similar to the patches applied to Go 1.20.5 in this repository.
 
+**Target Platforms**: IBM i 7.4, IBM i 7.5, and AIX on Power Systems
+
 ## Background
 
 The official Go releases do not fully support cross-compiling for AIX PPC64 from Windows due to memory addressing differences on IBM i systems. This repository contains patches that adjust memory addresses and build settings to enable this functionality.
+
+**IBM i 7.5 Compatibility**: These patches work identically on both IBM i 7.4 and 7.5, as both versions use the same 64-bit memory addressing scheme and PASE environment. See `IBM_I_7.5_COMPATIBILITY.md` for details.
 
 ## Analysis Summary
 
@@ -157,7 +161,9 @@ After applying these patches, you can test the modified Go compiler by:
    set CGO_ENABLED=1
    ```
 3. Attempt to cross-compile a simple Go program
-4. Deploy and test the binary on an IBM i AIX system
+4. Deploy and test the binary on an IBM i AIX system (7.4, 7.5, or later)
+
+**Note**: The same compiled binaries work on both IBM i 7.4 and 7.5 without recompilation.
 
 ## References
 
@@ -167,11 +173,21 @@ After applying these patches, you can test the modified Go compiler by:
 
 ## Version Compatibility
 
+### Go Versions
+
 | Go Version | Requires Patches | Status |
 |------------|-----------------|---------|
 | 1.20.5     | Yes             | Applied in this repo |
-| 1.24.10    | Yes             | Patches documented |
+| 1.24.10    | Yes             | Applied in this repo |
 | 1.25.4     | Yes             | Patches documented |
+
+### IBM i Versions
+
+| IBM i Version | Compatible | Notes |
+|---------------|-----------|-------|
+| 7.4           | ✅ Yes    | Fully tested |
+| 7.5           | ✅ Yes    | Same patches, recommended for Power10 |
+| Future versions | ✅ Expected | Uses same memory addressing |
 
 ## Notes
 

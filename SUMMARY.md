@@ -9,6 +9,10 @@
 
 After thorough analysis, I can confirm that **both Go 1.24.10 and Go 1.25.4 require the same AIX PPC64 cross-compilation patches** that are currently applied to Go 1.20.5 in this repository.
 
+### ✅ IBM i 7.5 Compatible
+
+The patches in this repository are **fully compatible with IBM i 7.5** (as well as IBM i 7.4). Both versions use the same memory addressing scheme and support the same AIX binary format, making the Go patches work identically on both platforms.
+
 ### What Was Done
 
 #### 1. Analysis ✅

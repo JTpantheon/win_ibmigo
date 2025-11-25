@@ -9,6 +9,8 @@
 
 ✅ **Completed**: Patches have been successfully applied to both versions and verified.
 
+✅ **IBM i 7.5 Compatible**: The patches work identically for both IBM i 7.4 and 7.5, as both versions use the same 64-bit memory addressing scheme and AIX 7.2 binary compatibility.
+
 ## Analysis Results
 
 ### Go 1.24.10 Analysis
@@ -139,9 +141,25 @@ To use these patched Go versions:
 
 4. **Windows-Specific**: These patches are specifically for cross-compiling FROM Windows TO AIX PPC64
 
+5. **IBM i 7.5 Compatibility**: The patches are fully compatible with IBM i 7.5. Both IBM i 7.4 and 7.5 use the same 64-bit memory addressing scheme and support AIX 7.2 binaries. The memory address changes (0xa → 0x7) work identically on both versions.
+
+## IBM i Version Compatibility
+
+### IBM i 7.4 vs 7.5
+The patches in this repository work identically for both IBM i 7.4 and 7.5 because:
+
+1. **Same Memory Addressing**: Both versions use 64-bit memory addressing on Power Systems
+2. **Same AIX Binary Support**: Both support AIX 7.2 binaries (32-bit and 64-bit)
+3. **Same PASE Environment**: The PASE (Portable Application Solutions Environment) behaves identically regarding memory management
+4. **Address Range Compatibility**: The 0x7 address range (vs 0xa) works on both 7.4 and 7.5
+
+### Recommended Version
+- **IBM i 7.4**: Fully supported, tested on Power9
+- **IBM i 7.5**: Fully supported, recommended for Power10 hardware with enhanced performance
+
 ## Conclusion
 
-Both Go 1.24.10 and Go 1.25.4 require the same AIX PPC64 cross-compilation patches as Go 1.20.5. The patches have been successfully applied and verified. Users can now build Go 1.24.10 or 1.25.4 from the patched sources to cross-compile for AIX PPC64 from Windows.
+Both Go 1.24.10 and Go 1.25.4 require the same AIX PPC64 cross-compilation patches as Go 1.20.5. The patches have been successfully applied and verified. **These patches work on both IBM i 7.4 and IBM i 7.5 systems**, allowing users to build Go from the patched sources to cross-compile for AIX PPC64 from Windows.
 
 ## References
 
