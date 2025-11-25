@@ -58,16 +58,16 @@ All instances of AIX memory addressing were changed from the `0xA` range to `0x7
 ## Files Modified
 
 ### Go 1.24.10
-- `/tmp/go-analysis/go1.24.10/src/runtime/tagptr_64bit.go`
-- `/tmp/go-analysis/go1.24.10/src/runtime/malloc.go`
-- `/tmp/go-analysis/go1.24.10/src/cmd/dist/build.go`
-- `/tmp/go-analysis/go1.24.10/src/cmd/dist/util.go`
+- `src/runtime/tagptr_64bit.go`
+- `src/runtime/malloc.go`
+- `src/cmd/dist/build.go`
+- `src/cmd/dist/util.go`
 
 ### Go 1.25.4
-- `/tmp/go-analysis/go1.25.4/src/runtime/tagptr_64bit.go`
-- `/tmp/go-analysis/go1.25.4/src/runtime/malloc.go`
-- `/tmp/go-analysis/go1.25.4/src/cmd/dist/build.go`
-- `/tmp/go-analysis/go1.25.4/src/cmd/dist/util.go`
+- `src/runtime/tagptr_64bit.go`
+- `src/runtime/malloc.go`
+- `src/cmd/dist/build.go`
+- `src/cmd/dist/util.go`
 
 ## Verification
 
@@ -80,8 +80,10 @@ All changes were verified by:
 ## Archive Creation
 
 Modified source trees have been archived:
-- `/tmp/go-analysis/go1.24.10-aix-patched.tar.gz` (62 MB)
-- `/tmp/go-analysis/go1.25.4-aix-patched.tar.gz` (65 MB)
+- `go1.24.10-aix-patched.tar.gz` (62 MB) - Contains all AIX patches applied
+- `go1.25.4-aix-patched.tar.gz` (65 MB) - Contains all AIX patches applied
+
+**Note:** These archives were created during analysis and testing. Users should apply patches to fresh downloads from official Go sources.
 
 ## Next Steps
 

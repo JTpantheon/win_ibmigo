@@ -50,7 +50,7 @@ p = uintptr(i)<<40 | uintptrMask&(0x70<<52)
 #### 4. `src/cmd/dist/build.go` (After Line 1734)
 ```go
 # Add after the plan9 vx32 check:
-goCmd = append(goCmd, "-p=1")  // ibmi sumit
+goCmd = append(goCmd, "-p=1")  // Force single-threaded builds for IBM i
 ```
 
 #### 5. `src/cmd/dist/util.go` (Line 124)
