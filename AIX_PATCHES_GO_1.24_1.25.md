@@ -177,8 +177,8 @@ After applying these patches, you can test the modified Go compiler by:
 
 | Go Version | Requires Patches | Status |
 |------------|-----------------|---------|
-| 1.20.5     | Yes             | Applied in this repo |
-| 1.24.10    | Yes             | Applied in this repo |
+| 1.20.5     | Yes             | Fully applied and tested |
+| 1.24.10    | Yes             | Fully applied and tested (current) |
 | 1.25.4     | Yes             | Patches documented |
 
 ### IBM i Versions

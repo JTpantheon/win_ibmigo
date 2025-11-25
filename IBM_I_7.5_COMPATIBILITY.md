@@ -41,11 +41,11 @@ While IBM i 7.5 includes enhancements, none affect Go compilation compatibility:
 
 | Feature | IBM i 7.4 | IBM i 7.5 | Impact on Go Patches |
 |---------|-----------|-----------|---------------------|
-| Memory addressing | 64-bit | 64-bit | None - identical |
-| AIX binary support | Up to AIX 7.2 | Up to AIX 7.2 | None - identical |
-| PASE environment | Present | Present | None - identical |
-| Hardware support | Power9 | Power9/10 | None - runtime only |
-| Performance | Standard | Enhanced on Power10 | Positive - faster execution |
+| Memory addressing | 64-bit | 64-bit | No impact - identical scheme |
+| AIX binary support | Up to AIX 7.2 | Up to AIX 7.2 | No impact - identical format |
+| PASE environment | Present | Present | No impact - identical behavior |
+| Hardware support | Power9 | Power9/10 | No impact - runtime optimization only |
+| Performance | Standard | Enhanced on Power10 | Positive impact - faster execution |
 
 ## Verification
 
