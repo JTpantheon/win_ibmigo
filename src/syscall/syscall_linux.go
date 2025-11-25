@@ -13,16 +13,10 @@ package syscall
 
 import (
 	"internal/itoa"
+	runtimesyscall "internal/runtime/syscall"
 	"runtime"
 	"unsafe"
 )
-
-// N.B. RawSyscall6 is provided via linkname by runtime/internal/syscall.
-//
-// Errno is uintptr and thus compatible with the runtime/internal/syscall
-// definition.
-
-func RawSyscall6(trap, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2 uintptr, err Errno)
 
 // Pull in entersyscall/exitsyscall for Syscall/Syscall6.
 //
@@ -40,8 +34,7 @@ func runtime_exitsyscall()
 // N.B. For the Syscall functions below:
 //
 // //go:uintptrkeepalive because the uintptr argument may be converted pointers
-// that need to be kept alive in the caller (this is implied for RawSyscall6
-// since it has no body).
+// that need to be kept alive in the caller.
 //
 // //go:nosplit because stack copying does not account for uintptrkeepalive, so
 // the stack must not grow. Stack copying cannot blindly assume that all
@@ -60,6 +53,17 @@ func runtime_exitsyscall()
 //go:linkname RawSyscall
 func RawSyscall(trap, a1, a2, a3 uintptr) (r1, r2 uintptr, err Errno) {
 	return RawSyscall6(trap, a1, a2, a3, 0, 0, 0)
+}
+
+//go:uintptrkeepalive
+//go:nosplit
+//go:norace
+//go:linkname RawSyscall6
+func RawSyscall6(trap, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2 uintptr, err Errno) {
+	var errno uintptr
+	r1, r2, errno = runtimesyscall.Syscall6(trap, a1, a2, a3, a4, a5, a6)
+	err = Errno(errno)
+	return
 }
 
 //go:uintptrkeepalive
@@ -95,7 +99,7 @@ func Syscall6(trap, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2 uintptr, err Errno) 
 }
 
 func rawSyscallNoError(trap, a1, a2, a3 uintptr) (r1, r2 uintptr)
-func rawVforkSyscall(trap, a1, a2 uintptr) (r1 uintptr, err Errno)
+func rawVforkSyscall(trap, a1, a2, a3 uintptr) (r1 uintptr, err Errno)
 
 /*
  * Wrapped
@@ -241,15 +245,23 @@ func Faccessat(dirfd int, path string, mode uint32, flags int) (err error) {
 }
 
 //sys	fchmodat(dirfd int, path string, mode uint32) (err error)
+//sys	fchmodat2(dirfd int, path string, mode uint32, flags int) (err error) = _SYS_fchmodat2
 
-func Fchmodat(dirfd int, path string, mode uint32, flags int) (err error) {
-	// Linux fchmodat doesn't support the flags parameter. Mimick glibc's behavior
-	// and check the flags. Otherwise the mode would be applied to the symlink
-	// destination which is not what the user expects.
-	if flags&^_AT_SYMLINK_NOFOLLOW != 0 {
-		return EINVAL
-	} else if flags&_AT_SYMLINK_NOFOLLOW != 0 {
-		return EOPNOTSUPP
+func Fchmodat(dirfd int, path string, mode uint32, flags int) error {
+	// Linux fchmodat doesn't support the flags parameter, but fchmodat2 does.
+	// Try fchmodat2 if flags are specified.
+	if flags != 0 {
+		err := fchmodat2(dirfd, path, mode, flags)
+		if err == ENOSYS {
+			// fchmodat2 isn't available. If the flags are known to be valid,
+			// return EOPNOTSUPP to indicate that fchmodat doesn't support them.
+			if flags&^(_AT_SYMLINK_NOFOLLOW|_AT_EMPTY_PATH) != 0 {
+				return EINVAL
+			} else if flags&(_AT_SYMLINK_NOFOLLOW|_AT_EMPTY_PATH) != 0 {
+				return EOPNOTSUPP
+			}
+		}
+		return err
 	}
 	return fchmodat(dirfd, path, mode)
 }
@@ -554,7 +566,8 @@ func (sa *SockaddrUnix) sockaddr() (unsafe.Pointer, _Socklen, error) {
 	if n > 0 {
 		sl += _Socklen(n) + 1
 	}
-	if sa.raw.Path[0] == '@' {
+	if sa.raw.Path[0] == '@' || (sa.raw.Path[0] == 0 && sl > 3) {
+		// Check sl > 3 so we don't change unnamed socket behavior.
 		sa.raw.Path[0] = 0
 		// Don't count trailing NUL for abstract address.
 		sl--
@@ -646,8 +659,7 @@ func anyToSockaddr(rsa *RawSockaddrAny) (Sockaddr, error) {
 		for n < len(pp.Path) && pp.Path[n] != 0 {
 			n++
 		}
-		bytes := (*[len(pp.Path)]byte)(unsafe.Pointer(&pp.Path[0]))[0:n]
-		sa.Name = string(bytes)
+		sa.Name = string(unsafe.Slice((*byte)(unsafe.Pointer(&pp.Path[0])), n))
 		return sa, nil
 
 	case AF_INET:
@@ -668,6 +680,10 @@ func anyToSockaddr(rsa *RawSockaddrAny) (Sockaddr, error) {
 		return sa, nil
 	}
 	return nil, EAFNOSUPPORT
+}
+
+func Accept(fd int) (nfd int, sa Sockaddr, err error) {
+	return Accept4(fd, 0)
 }
 
 func Accept4(fd int, flags int) (nfd int, sa Sockaddr, err error) {
@@ -828,6 +844,7 @@ func BindToDevice(fd int, device string) (err error) {
 }
 
 //sys	ptrace(request int, pid int, addr uintptr, data uintptr) (err error)
+//sys	ptracePtr(request int, pid int, addr uintptr, data unsafe.Pointer) (err error) = SYS_PTRACE
 
 func ptracePeek(req int, pid int, addr uintptr, out []byte) (count int, err error) {
 	// The peek requests are machine-size oriented, so we wrap it
@@ -845,7 +862,7 @@ func ptracePeek(req int, pid int, addr uintptr, out []byte) (count int, err erro
 	// boundary.
 	n := 0
 	if addr%sizeofPtr != 0 {
-		err = ptrace(req, pid, addr-addr%sizeofPtr, uintptr(unsafe.Pointer(&buf[0])))
+		err = ptracePtr(req, pid, addr-addr%sizeofPtr, unsafe.Pointer(&buf[0]))
 		if err != nil {
 			return 0, err
 		}
@@ -857,7 +874,7 @@ func ptracePeek(req int, pid int, addr uintptr, out []byte) (count int, err erro
 	for len(out) > 0 {
 		// We use an internal buffer to guarantee alignment.
 		// It's not documented if this is necessary, but we're paranoid.
-		err = ptrace(req, pid, addr+uintptr(n), uintptr(unsafe.Pointer(&buf[0])))
+		err = ptracePtr(req, pid, addr+uintptr(n), unsafe.Pointer(&buf[0]))
 		if err != nil {
 			return n, err
 		}
@@ -885,7 +902,7 @@ func ptracePoke(pokeReq int, peekReq int, pid int, addr uintptr, data []byte) (c
 	n := 0
 	if addr%sizeofPtr != 0 {
 		var buf [sizeofPtr]byte
-		err = ptrace(peekReq, pid, addr-addr%sizeofPtr, uintptr(unsafe.Pointer(&buf[0])))
+		err = ptracePtr(peekReq, pid, addr-addr%sizeofPtr, unsafe.Pointer(&buf[0]))
 		if err != nil {
 			return 0, err
 		}
@@ -912,7 +929,7 @@ func ptracePoke(pokeReq int, peekReq int, pid int, addr uintptr, data []byte) (c
 	// Trailing edge.
 	if len(data) > 0 {
 		var buf [sizeofPtr]byte
-		err = ptrace(peekReq, pid, addr+uintptr(n), uintptr(unsafe.Pointer(&buf[0])))
+		err = ptracePtr(peekReq, pid, addr+uintptr(n), unsafe.Pointer(&buf[0]))
 		if err != nil {
 			return n, err
 		}
@@ -936,12 +953,22 @@ func PtracePokeData(pid int, addr uintptr, data []byte) (count int, err error) {
 	return ptracePoke(PTRACE_POKEDATA, PTRACE_PEEKDATA, pid, addr, data)
 }
 
+const (
+	_NT_PRSTATUS = 1
+)
+
 func PtraceGetRegs(pid int, regsout *PtraceRegs) (err error) {
-	return ptrace(PTRACE_GETREGS, pid, 0, uintptr(unsafe.Pointer(regsout)))
+	var iov Iovec
+	iov.Base = (*byte)(unsafe.Pointer(regsout))
+	iov.SetLen(int(unsafe.Sizeof(*regsout)))
+	return ptracePtr(PTRACE_GETREGSET, pid, uintptr(_NT_PRSTATUS), unsafe.Pointer(&iov))
 }
 
 func PtraceSetRegs(pid int, regs *PtraceRegs) (err error) {
-	return ptrace(PTRACE_SETREGS, pid, 0, uintptr(unsafe.Pointer(regs)))
+	var iov Iovec
+	iov.Base = (*byte)(unsafe.Pointer(regs))
+	iov.SetLen(int(unsafe.Sizeof(*regs)))
+	return ptracePtr(PTRACE_SETREGSET, pid, uintptr(_NT_PRSTATUS), unsafe.Pointer(&iov))
 }
 
 func PtraceSetOptions(pid int, options int) (err error) {
@@ -950,7 +977,7 @@ func PtraceSetOptions(pid int, options int) (err error) {
 
 func PtraceGetEventMsg(pid int) (msg uint, err error) {
 	var data _C_long
-	err = ptrace(PTRACE_GETEVENTMSG, pid, 0, uintptr(unsafe.Pointer(&data)))
+	err = ptracePtr(PTRACE_GETEVENTMSG, pid, 0, unsafe.Pointer(&data))
 	msg = uint(data)
 	return
 }
@@ -1088,7 +1115,7 @@ func runtime_doAllThreadsSyscall(trap, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2, 
 //
 // AllThreadsSyscall is unaware of any threads that are launched
 // explicitly by cgo linked code, so the function always returns
-// ENOTSUP in binaries that use cgo.
+// [ENOTSUP] in binaries that use cgo.
 //
 //go:uintptrescapes
 func AllThreadsSyscall(trap, a1, a2, a3 uintptr) (r1, r2 uintptr, err Errno) {
@@ -1099,7 +1126,7 @@ func AllThreadsSyscall(trap, a1, a2, a3 uintptr) (r1, r2 uintptr, err Errno) {
 	return r1, r2, Errno(errno)
 }
 
-// AllThreadsSyscall6 is like AllThreadsSyscall, but extended to six
+// AllThreadsSyscall6 is like [AllThreadsSyscall], but extended to six
 // arguments.
 //
 //go:uintptrescapes
@@ -1236,7 +1263,6 @@ func Setuid(uid int) (err error) {
 //sys	write(fd int, p []byte) (n int, err error)
 //sys	exitThread(code int) (err error) = SYS_EXIT
 //sys	readlen(fd int, p *byte, np int) (n int, err error) = SYS_READ
-//sys	writelen(fd int, p *byte, np int) (n int, err error) = SYS_WRITE
 
 // mmap varies by architecture; see syscall_linux_*.go.
 //sys	munmap(addr uintptr, length uintptr) (err error)
@@ -1262,13 +1288,28 @@ func Munmap(b []byte) (err error) {
 //sys	Mlockall(flags int) (err error)
 //sys	Munlockall() (err error)
 
+func Getrlimit(resource int, rlim *Rlimit) (err error) {
+	// prlimit1 is the same as prlimit when newlimit == nil
+	return prlimit1(0, resource, nil, rlim)
+}
+
+// setrlimit sets a resource limit.
+// The Setrlimit function is in rlimit.go, and calls this one.
+func setrlimit(resource int, rlim *Rlimit) (err error) {
+	return prlimit1(0, resource, rlim, nil)
+}
+
 // prlimit changes a resource limit. We use a single definition so that
 // we can tell StartProcess to not restore the original NOFILE limit.
-// This is unexported but can be called from x/sys/unix.
+//
+// golang.org/x/sys linknames prlimit.
+// Do not remove or change the type signature.
+//
+//go:linkname prlimit
 func prlimit(pid int, resource int, newlimit *Rlimit, old *Rlimit) (err error) {
 	err = prlimit1(pid, resource, newlimit, old)
-	if err == nil && newlimit != nil && resource == RLIMIT_NOFILE {
-		origRlimitNofile.Store(Rlimit{0, 0})
+	if err == nil && newlimit != nil && resource == RLIMIT_NOFILE && (pid == 0 || pid == Getpid()) {
+		origRlimitNofile.Store(nil)
 	}
 	return err
 }

@@ -13,8 +13,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 )
@@ -33,23 +33,8 @@ func TestMain(m *testing.M) {
 
 // packPath returns the path to the "pack" binary to run.
 func packPath(t testing.TB) string {
-	t.Helper()
-	testenv.MustHaveExec(t)
-
-	packPathOnce.Do(func() {
-		packExePath, packPathErr = os.Executable()
-	})
-	if packPathErr != nil {
-		t.Fatal(packPathErr)
-	}
-	return packExePath
+	return testenv.Executable(t)
 }
-
-var (
-	packPathOnce sync.Once
-	packExePath  string
-	packPathErr  error
-)
 
 // testCreate creates an archive in the specified directory.
 func testCreate(t *testing.T, dir string) {
@@ -159,20 +144,7 @@ func TestExtract(t *testing.T) {
 	ar.addFile(goodbyeFile.Reset())
 	ar.a.File().Close()
 	// Now extract one file. We chdir to the directory of the archive for simplicity.
-	pwd, err := os.Getwd()
-	if err != nil {
-		t.Fatal("os.Getwd: ", err)
-	}
-	err = os.Chdir(dir)
-	if err != nil {
-		t.Fatal("os.Chdir: ", err)
-	}
-	defer func() {
-		err := os.Chdir(pwd)
-		if err != nil {
-			t.Fatal("os.Chdir: ", err)
-		}
-	}()
+	t.Chdir(dir)
 	ar = openArchive(name, os.O_RDONLY, []string{goodbyeFile.name})
 	ar.scan(ar.extractContents)
 	ar.a.File().Close()
@@ -191,6 +163,7 @@ func TestExtract(t *testing.T) {
 // Test that pack-created archives can be understood by the tools.
 func TestHello(t *testing.T) {
 	testenv.MustHaveGoBuild(t)
+	testenv.MustInternalLink(t, false)
 
 	dir := t.TempDir()
 	hello := filepath.Join(dir, "hello.go")
@@ -210,7 +183,7 @@ func TestHello(t *testing.T) {
 	}
 
 	importcfgfile := filepath.Join(dir, "hello.importcfg")
-	testenv.WriteImportcfg(t, importcfgfile, nil)
+	testenv.WriteImportcfg(t, importcfgfile, nil, hello)
 
 	goBin := testenv.GoToolPath(t)
 	run(goBin, "tool", "compile", "-importcfg="+importcfgfile, "-p=main", "hello.go")
@@ -284,7 +257,7 @@ func TestLargeDefs(t *testing.T) {
 	goBin := testenv.GoToolPath(t)
 	run(goBin, "tool", "compile", "-importcfg="+importcfgfile, "-p=large", "large.go")
 	run(packPath(t), "grc", "large.a", "large.o")
-	testenv.WriteImportcfg(t, importcfgfile, map[string]string{"large": filepath.Join(dir, "large.o")})
+	testenv.WriteImportcfg(t, importcfgfile, map[string]string{"large": filepath.Join(dir, "large.o")}, "runtime")
 	run(goBin, "tool", "compile", "-importcfg="+importcfgfile, "-p=main", "main.go")
 	run(goBin, "tool", "link", "-importcfg="+importcfgfile, "-L", ".", "-o", "a.out", "main.o")
 	out := run("./a.out")
@@ -413,6 +386,9 @@ func doRun(t *testing.T, dir string, args ...string) string {
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	if err != nil {
+		if t.Name() == "TestHello" && runtime.GOOS == "android" && runtime.GOARCH == "arm64" {
+			testenv.SkipFlaky(t, 58806)
+		}
 		t.Fatalf("%v: %v\n%s", args, err, string(out))
 	}
 	return string(out)
@@ -490,6 +466,10 @@ func (f *FakeFile) IsDir() bool {
 
 func (f *FakeFile) Sys() any {
 	return nil
+}
+
+func (f *FakeFile) String() string {
+	return fs.FormatFileInfo(f)
 }
 
 // Special helpers.

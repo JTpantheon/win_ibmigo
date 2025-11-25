@@ -46,7 +46,21 @@ above has a `uint8` type, and a constant boolean value will have a `bool` type.
 However, certain types don't come from Go and are special; below we will cover
 `memory`, the most common of them.
 
-See [value.go](value.go) for more information.
+Some operators contain an auxiliary field. The aux fields are usually printed as
+enclosed in `[]` or `{}`, and could be the constant op argument, argument type,
+etc.
+for example:
+
+	v13 (?) = Const64 <int> [1]
+
+Here the aux field is the constant op argument, the op is creating a `Const64`
+value of 1. One more example:
+
+	v17 (361) = Store <mem> {int} v16 v14 v8
+
+Here the aux field is the type of the value being `Store`ed, which is int.
+
+See [value.go](value.go) and `_gen/*Ops.go` for more information.
 
 #### Memory types
 
@@ -214,8 +228,8 @@ To read more on rewrite rules, have a look at the top comments in
 
 Similarly, the code to manage operators is also code generated from
 `_gen/*Ops.go`, as it is easier to maintain a few tables than a lot of code.
-After changing the rules or operators, see [_gen/README](_gen/README) for
-instructions on how to generate the Go code again.
+After changing the rules or operators, run `go generate cmd/compile/internal/ssa`
+to generate the Go code again.
 
 <!---
 TODO: more tips and info could likely go here

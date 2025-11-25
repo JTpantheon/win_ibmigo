@@ -2,7 +2,11 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// +build cgo
+# ifdef __CYGWIN__
+#error "don't use the cygwin compiler to build native Windows programs; use MinGW instead"
+#else
+// Exclude the following code from Cygwin builds.
+// Cygwin doesn't implement process.h nor does it support _beginthread.
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -31,6 +35,9 @@ static CRITICAL_SECTION runtime_init_cs;
 
 static HANDLE runtime_init_wait;
 static int runtime_init_done;
+
+uintptr_t x_cgo_pthread_key_created;
+void (*x_crosscall2_ptr)(void (*fn)(void *), void *, int, size_t);
 
 // Pre-initialize the runtime synchronization objects
 void
@@ -68,8 +75,10 @@ x_cgo_sys_thread_create(void (*func)(void*), void* arg) {
 
 int
 _cgo_is_runtime_initialized() {
+	 int status;
+
 	 EnterCriticalSection(&runtime_init_cs);
-	 int status = runtime_init_done;
+	 status = runtime_init_done;
 	 LeaveCriticalSection(&runtime_init_cs);
 	 return status;
 }
@@ -91,6 +100,12 @@ _cgo_wait_runtime_init_done(void) {
 		return arg.Context;
 	}
 	return 0;
+}
+
+// Should not be used since x_cgo_pthread_key_created will always be zero.
+void x_cgo_bindm(void* dummy) {
+	fprintf(stderr, "unexpected cgo_bindm on Windows\n");
+	abort();
 }
 
 void
@@ -149,3 +164,5 @@ void _cgo_beginthread(void (*func)(void*), void* arg) {
 	fprintf(stderr, "runtime: failed to create new OS thread (%d)\n", errno);
 	abort();
 }
+
+#endif // __CYGWIN__

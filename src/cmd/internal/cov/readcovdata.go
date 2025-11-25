@@ -108,7 +108,7 @@ type CovDataVisitor interface {
 	EndCounters()
 
 	// Invoked for each package in the meta-data file for the pod,
-	// first the 'begin' method when processinf of hte package starts,
+	// first the 'begin' method when processing of the package starts,
 	// then the 'end' method when we're done
 	BeginPackage(pd *decodemeta.CoverageMetaDataDecoder, pkgIdx uint32)
 	EndPackage(pd *decodemeta.CoverageMetaDataDecoder, pkgIdx uint32)
@@ -204,15 +204,12 @@ func (r *CovDataReader) visitPod(p pods.Pod) error {
 	}
 	r.vis.VisitMetaDataFile(p.MetaFile, mfr)
 
-	// Read counter data files.
-	for k, cdf := range p.CounterDataFiles {
+	processCounterDataFile := func(cdf string, k int) error {
 		cf, err := os.Open(cdf)
 		if err != nil {
 			return r.fatal("opening counter data file %s: %s", cdf, err)
 		}
-		defer func(f *os.File) {
-			f.Close()
-		}(cf)
+		defer cf.Close()
 		var mr *MReader
 		mr, err = NewMreader(cf)
 		if err != nil {
@@ -236,6 +233,14 @@ func (r *CovDataReader) visitPod(p pods.Pod) error {
 			r.vis.VisitFuncCounterData(data)
 		}
 		r.vis.EndCounterDataFile(cdf, cdr, p.Origins[k])
+		return nil
+	}
+
+	// Read counter data files.
+	for k, cdf := range p.CounterDataFiles {
+		if err := processCounterDataFile(cdf, k); err != nil {
+			return err
+		}
 	}
 	r.vis.EndCounters()
 

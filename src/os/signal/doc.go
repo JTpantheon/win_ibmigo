@@ -16,7 +16,7 @@ therefore cannot be affected by this package.
 Synchronous signals are signals triggered by errors in program
 execution: SIGBUS, SIGFPE, and SIGSEGV. These are only considered
 synchronous when caused by program execution, not when sent using
-os.Process.Kill or the kill program or some similar mechanism. In
+[os.Process.Kill] or the kill program or some similar mechanism. In
 general, except as discussed below, Go programs will convert a
 synchronous signal into a run-time panic.
 
@@ -52,7 +52,7 @@ generally be honored. However, some signals are explicitly unblocked:
 the synchronous signals, SIGILL, SIGTRAP, SIGSTKFLT, SIGCHLD, SIGPROF,
 and, on Linux, signals 32 (SIGCANCEL) and 33 (SIGSETXID)
 (SIGCANCEL and SIGSETXID are used internally by glibc). Subprocesses
-started by os.Exec, or by the os/exec package, will inherit the
+started by [os.Exec], or by [os/exec], will inherit the
 modified signal mask.
 
 # Changing the behavior of signals in Go programs
@@ -68,15 +68,15 @@ signals SIGTSTP, SIGTTIN, and SIGTTOU, in which case the system
 default behavior does not occur. It also applies to some signals that
 otherwise cause no action: SIGUSR1, SIGUSR2, SIGPIPE, SIGALRM,
 SIGCHLD, SIGCONT, SIGURG, SIGXCPU, SIGXFSZ, SIGVTALRM, SIGWINCH,
-SIGIO, SIGPWR, SIGSYS, SIGINFO, SIGTHR, SIGWAITING, SIGLWP, SIGFREEZE,
+SIGIO, SIGPWR, SIGINFO, SIGTHR, SIGWAITING, SIGLWP, SIGFREEZE,
 SIGTHAW, SIGLOST, SIGXRES, SIGJVM1, SIGJVM2, and any real time signals
 used on the system. Note that not all of these signals are available
 on all systems.
 
-If the program was started with SIGHUP or SIGINT ignored, and Notify
+If the program was started with SIGHUP or SIGINT ignored, and [Notify]
 is called for either signal, a signal handler will be installed for
-that signal and it will no longer be ignored. If, later, Reset or
-Ignore is called for that signal, or Stop is called on all channels
+that signal and it will no longer be ignored. If, later, [Reset] or
+[Ignore] is called for that signal, or [Stop] is called on all channels
 passed to Notify for that signal, the signal will once again be
 ignored. Reset will restore the system default behavior for the
 signal, while Ignore will cause the system to ignore the signal
@@ -146,8 +146,8 @@ Go behavior described above will not occur. This can be an issue with
 the SIGPROF signal in particular.
 
 The non-Go code should not change the signal mask on any threads
-created by the Go runtime. If the non-Go code starts new threads of
-its own, it may set the signal mask as it pleases.
+created by the Go runtime. If the non-Go code starts new threads
+itself, those threads may set the signal mask as they please.
 
 If the non-Go code starts a new thread, changes the signal mask, and
 then invokes a Go function in that thread, the Go runtime will
@@ -210,8 +210,8 @@ before raising the signal.
 # Windows
 
 On Windows a ^C (Control-C) or ^BREAK (Control-Break) normally cause
-the program to exit. If Notify is called for os.Interrupt, ^C or ^BREAK
-will cause os.Interrupt to be sent on the channel, and the program will
+the program to exit. If Notify is called for [os.Interrupt], ^C or ^BREAK
+will cause [os.Interrupt] to be sent on the channel, and the program will
 not exit. If Reset is called, or Stop is called on all channels passed
 to Notify, then the default behavior will be restored.
 

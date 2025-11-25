@@ -265,11 +265,9 @@ func TestCallbackInAnotherThread(t *testing.T) {
 	h := syscall.Handle(r)
 	defer syscall.CloseHandle(h)
 
-	switch s, err := syscall.WaitForSingleObject(h, 100); s {
+	switch s, err := syscall.WaitForSingleObject(h, syscall.INFINITE); s {
 	case syscall.WAIT_OBJECT_0:
 		break
-	case syscall.WAIT_TIMEOUT:
-		t.Fatal("timeout waiting for thread to exit")
 	case syscall.WAIT_FAILED:
 		t.Fatalf("WaitForSingleObject failed: %v", err)
 	default:
@@ -648,21 +646,25 @@ func TestZeroDivisionException(t *testing.T) {
 }
 
 func TestWERDialogue(t *testing.T) {
-	if os.Getenv("TESTING_WER_DIALOGUE") == "1" {
-		defer os.Exit(0)
-
-		*runtime.TestingWER = true
+	if os.Getenv("TEST_WER_DIALOGUE") == "1" {
 		const EXCEPTION_NONCONTINUABLE = 1
 		mod := syscall.MustLoadDLL("kernel32.dll")
 		proc := mod.MustFindProc("RaiseException")
 		proc.Call(0xbad, EXCEPTION_NONCONTINUABLE, 0, 0)
-		println("RaiseException should not return")
-		return
+		t.Fatal("RaiseException should not return")
 	}
-	cmd := exec.Command(os.Args[0], "-test.run=TestWERDialogue")
-	cmd.Env = []string{"TESTING_WER_DIALOGUE=1"}
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := testenv.CleanCmdEnv(testenv.Command(t, exe, "-test.run=TestWERDialogue"))
+	cmd.Env = append(cmd.Env, "TEST_WER_DIALOGUE=1", "GOTRACEBACK=wer")
 	// Child process should not open WER dialogue, but return immediately instead.
-	cmd.CombinedOutput()
+	// The exit code can't be reliably tested here because Windows can change it.
+	_, err = cmd.CombinedOutput()
+	if err == nil {
+		t.Error("test program succeeded unexpectedly")
+	}
 }
 
 func TestWindowsStackMemory(t *testing.T) {
@@ -671,7 +673,7 @@ func TestWindowsStackMemory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to read stack usage: %v", err)
 	}
-	if expected, got := 100<<10, stackUsage; got > expected {
+	if expected, got := 128<<10, stackUsage; got > expected {
 		t.Fatalf("expected < %d bytes of memory per thread, got %d", expected, got)
 	}
 }
@@ -1109,12 +1111,6 @@ func TestDLLPreloadMitigation(t *testing.T) {
 
 	tmpdir := t.TempDir()
 
-	dir0, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(dir0)
-
 	const src = `
 #include <stdint.h>
 #include <windows.h>
@@ -1125,7 +1121,7 @@ uintptr_t cfunc(void) {
 }
 `
 	srcname := "nojack.c"
-	err = os.WriteFile(filepath.Join(tmpdir, srcname), []byte(src), 0)
+	err := os.WriteFile(filepath.Join(tmpdir, srcname), []byte(src), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1146,7 +1142,7 @@ uintptr_t cfunc(void) {
 	// ("nojack.dll") Think of this as the user double-clicking an
 	// installer from their Downloads directory where a browser
 	// silently downloaded some malicious DLLs.
-	os.Chdir(tmpdir)
+	t.Chdir(tmpdir)
 
 	// First before we can load a DLL from the current directory,
 	// loading it only as "nojack.dll", without an absolute path.
@@ -1164,10 +1160,7 @@ uintptr_t cfunc(void) {
 	dll, err = syscall.LoadDLL(name)
 	if err == nil {
 		dll.Release()
-		if wantLoadLibraryEx() {
-			t.Fatalf("Bad: insecure load of DLL by base name %q before sysdll registration: %v", name, err)
-		}
-		t.Skip("insecure load of DLL, but expected")
+		t.Fatalf("Bad: insecure load of DLL by base name %q before sysdll registration: %v", name, err)
 	}
 }
 
@@ -1213,22 +1206,11 @@ func TestBigStackCallbackSyscall(t *testing.T) {
 	}
 }
 
-// wantLoadLibraryEx reports whether we expect LoadLibraryEx to work for tests.
-func wantLoadLibraryEx() bool {
-	return testenv.Builder() != "" && (runtime.GOARCH == "amd64" || runtime.GOARCH == "386")
-}
-
-func TestLoadLibraryEx(t *testing.T) {
-	use, have, flags := runtime.LoadLibraryExStatus()
-	if use {
-		return // success.
-	}
-	if wantLoadLibraryEx() {
-		t.Fatalf("Expected LoadLibraryEx+flags to be available. (LoadLibraryEx=%v; flags=%v)",
-			have, flags)
-	}
-	t.Skipf("LoadLibraryEx not usable, but not expected. (LoadLibraryEx=%v; flags=%v)",
-		have, flags)
+func TestSyscallStackUsage(t *testing.T) {
+	// Test that the stack usage of a syscall doesn't exceed the limit.
+	// See https://go.dev/issue/69813.
+	syscall.Syscall15(procSetEvent.Addr(), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+	syscall.Syscall18(procSetEvent.Addr(), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
 }
 
 var (

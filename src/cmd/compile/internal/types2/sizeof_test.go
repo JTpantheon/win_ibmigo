@@ -36,7 +36,7 @@ func TestSizeof(t *testing.T) {
 		{term{}, 12, 24},
 
 		// Objects
-		{PkgName{}, 64, 104},
+		{PkgName{}, 60, 96},
 		{Const{}, 64, 104},
 		{TypeName{}, 56, 88},
 		{Var{}, 64, 104},
@@ -47,7 +47,7 @@ func TestSizeof(t *testing.T) {
 
 		// Misc
 		{Scope{}, 60, 104},
-		{Package{}, 36, 72},
+		{Package{}, 44, 88},
 		{_TypeSet{}, 28, 56},
 	}
 

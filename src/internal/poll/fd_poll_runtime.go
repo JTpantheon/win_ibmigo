@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build unix || windows
+//go:build unix || windows || wasip1
 
 package poll
 
@@ -164,6 +164,16 @@ func setDeadlineImpl(fd *FD, t time.Time, mode int) error {
 
 // IsPollDescriptor reports whether fd is the descriptor being used by the poller.
 // This is only used for testing.
+//
+// IsPollDescriptor should be an internal detail,
+// but widely used packages access it using linkname.
+// Notable members of the hall of shame include:
+//   - github.com/opencontainers/runc
+//
+// Do not remove or change the type signature.
+// See go.dev/issue/67401.
+//
+//go:linkname IsPollDescriptor
 func IsPollDescriptor(fd uintptr) bool {
 	return runtime_isPollServerDescriptor(fd)
 }

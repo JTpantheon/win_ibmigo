@@ -33,12 +33,7 @@ const (
 // test. At one point this was created via "go build"; we now reuse the unit
 // test executable itself.
 func testcover(t testing.TB) string {
-	exe, err := os.Executable()
-	if err != nil {
-		t.Helper()
-		t.Fatal(err)
-	}
-	return exe
+	return testenv.Executable(t)
 }
 
 // testTempDir is a temporary directory created in TestMain.
@@ -113,8 +108,6 @@ func tempDir(t *testing.T) string {
 // "-toolexec" wrapper program to invoke the cover test executable
 // itself via "go test -cover".
 func TestCoverWithToolExec(t *testing.T) {
-	testenv.MustHaveExec(t)
-
 	toolexecArg := "-toolexec=" + testcover(t)
 
 	t.Run("CoverHTML", func(t *testing.T) {
@@ -125,6 +118,9 @@ func TestCoverWithToolExec(t *testing.T) {
 	})
 	t.Run("FuncWithDuplicateLines", func(t *testing.T) {
 		testFuncWithDuplicateLines(t, toolexecArg)
+	})
+	t.Run("MissingTrailingNewlineIssue58370", func(t *testing.T) {
+		testMissingTrailingNewlineIssue58370(t, toolexecArg)
 	})
 }
 
@@ -335,8 +331,6 @@ func findDirectives(source []byte) []directiveInfo {
 // Makes sure that `cover -func=profile.cov` reports accurate coverage.
 // Issue #20515.
 func TestCoverFunc(t *testing.T) {
-	testenv.MustHaveExec(t)
-
 	// testcover -func ./testdata/profile.cov
 	coverProfile := filepath.Join(testdata, "profile.cov")
 	cmd := testenv.Command(t, testcover(t), "-func", coverProfile)
@@ -573,4 +567,74 @@ func runExpectingError(c *exec.Cmd, t *testing.T) string {
 		return fmt.Sprintf("unexpected pass for %+v", c.Args)
 	}
 	return string(out)
+}
+
+// Test instrumentation of package that ends before an expected
+// trailing newline following package clause. Issue #58370.
+func testMissingTrailingNewlineIssue58370(t *testing.T, toolexecArg string) {
+	testenv.MustHaveGoBuild(t)
+	dir := tempDir(t)
+
+	t.Parallel()
+
+	noeolDir := filepath.Join(dir, "issue58370")
+	noeolGo := filepath.Join(noeolDir, "noeol.go")
+	noeolTestGo := filepath.Join(noeolDir, "noeol_test.go")
+
+	if err := os.Mkdir(noeolDir, 0777); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(filepath.Join(noeolDir, "go.mod"), []byte("module noeol\n"), 0666); err != nil {
+		t.Fatal(err)
+	}
+	const noeolContents = `package noeol`
+	if err := os.WriteFile(noeolGo, []byte(noeolContents), 0444); err != nil {
+		t.Fatal(err)
+	}
+	const noeolTestContents = `
+package noeol
+import "testing"
+func TestCoverage(t *testing.T) { }
+`
+	if err := os.WriteFile(noeolTestGo, []byte(noeolTestContents), 0444); err != nil {
+		t.Fatal(err)
+	}
+
+	// go test -covermode atomic
+	cmd := testenv.Command(t, testenv.GoToolPath(t), "test", toolexecArg, "-covermode", "atomic")
+	cmd.Env = append(cmd.Environ(), "CMDCOVER_TOOLEXEC=true")
+	cmd.Dir = noeolDir
+	run(cmd, t)
+}
+
+func TestSrcPathWithNewline(t *testing.T) {
+	testenv.MustHaveExec(t)
+	t.Parallel()
+
+	// srcPath is intentionally not clean so that the path passed to testcover
+	// will not normalize the trailing / to a \ on Windows.
+	srcPath := t.TempDir() + string(filepath.Separator) + "\npackage main\nfunc main() { panic(string([]rune{'u', 'h', '-', 'o', 'h'}))\n/*/main.go"
+	mainSrc := ` package main
+
+func main() {
+	/* nothing here */
+	println("ok")
+}
+`
+	if err := os.MkdirAll(filepath.Dir(srcPath), 0777); err != nil {
+		t.Skipf("creating directory with bogus path: %v", err)
+	}
+	if err := os.WriteFile(srcPath, []byte(mainSrc), 0666); err != nil {
+		t.Skipf("writing file with bogus directory: %v", err)
+	}
+
+	cmd := testenv.Command(t, testcover(t), "-mode=atomic", srcPath)
+	cmd.Stderr = new(bytes.Buffer)
+	out, err := cmd.Output()
+	t.Logf("%v:\n%s", cmd, out)
+	t.Logf("stderr:\n%s", cmd.Stderr)
+	if err == nil {
+		t.Errorf("unexpected success; want failure due to newline in file path")
+	}
 }

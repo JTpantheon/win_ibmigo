@@ -570,7 +570,7 @@ func (t *node32) lub(key int32, allow_eq bool) *node32 {
 			// t is too small, lub is to right.
 			t = t.right
 		} else {
-			// t is a upper bound, record it and seek a better one.
+			// t is an upper bound, record it and seek a better one.
 			best = t
 			t = t.left
 		}
@@ -817,13 +817,6 @@ func (t *node32) leftToRoot() *node32 {
 	t.height_ = 1 + max(lr.height(), t.right.height())
 	left.height_ = 1 + max(t.height(), left.left.height())
 	return left
-}
-
-func max(a, b int8) int8 {
-	if a > b {
-		return a
-	}
-	return b
 }
 
 func (t *node32) copy() *node32 {

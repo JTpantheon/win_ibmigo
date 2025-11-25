@@ -6,7 +6,7 @@ package os_test
 
 import (
 	. "os"
-	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -91,7 +91,7 @@ func TestConsistentEnviron(t *testing.T) {
 	e0 := Environ()
 	for i := 0; i < 10; i++ {
 		e1 := Environ()
-		if !reflect.DeepEqual(e0, e1) {
+		if !slices.Equal(e0, e1) {
 			t.Fatalf("environment changed")
 		}
 	}
@@ -130,7 +130,7 @@ func TestClearenv(t *testing.T) {
 	defer func(origEnv []string) {
 		for _, pair := range origEnv {
 			// Environment variables on Windows can begin with =
-			// https://blogs.msdn.com/b/oldnewthing/archive/2010/05/06/10008132.aspx
+			// https://devblogs.microsoft.com/oldnewthing/20100506-00/?p=14133
 			i := strings.Index(pair[1:], "=") + 1
 			if err := Setenv(pair[:i], pair[i+1:]); err != nil {
 				t.Errorf("Setenv(%q, %q) failed during reset: %v", pair[:i], pair[i+1:], err)
@@ -171,6 +171,8 @@ func TestLookupEnv(t *testing.T) {
 // Check that they are properly reported by LookupEnv and can be set by SetEnv.
 // See https://golang.org/issue/49886.
 func TestEnvironConsistency(t *testing.T) {
+	t.Parallel()
+
 	for _, kv := range Environ() {
 		i := strings.Index(kv, "=")
 		if i == 0 {

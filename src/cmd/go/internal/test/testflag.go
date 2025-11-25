@@ -6,11 +6,13 @@ package test
 
 import (
 	"cmd/go/internal/base"
+	"cmd/go/internal/cfg"
 	"cmd/go/internal/cmdflag"
 	"cmd/go/internal/work"
 	"errors"
 	"flag"
 	"fmt"
+	"internal/godebug"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -25,8 +27,10 @@ import (
 // our command line are for us, and some are for the test binary, and
 // some are for both.
 
+var gotestjsonbuildtext = godebug.New("gotestjsonbuildtext")
+
 func init() {
-	work.AddBuildFlags(CmdTest, work.OmitVFlag)
+	work.AddBuildFlags(CmdTest, work.OmitVFlag|work.OmitJSONFlag)
 
 	cf := CmdTest.Flag
 	cf.BoolVar(&testC, "c", false, "")
@@ -48,8 +52,9 @@ func init() {
 	cf.Int("count", 0, "")
 	cf.String("cpu", "", "")
 	cf.StringVar(&testCPUProfile, "cpuprofile", "", "")
-	cf.Bool("failfast", false, "")
+	cf.BoolVar(&testFailFast, "failfast", false, "")
 	cf.StringVar(&testFuzz, "fuzz", "", "")
+	cf.Bool("fullpath", false, "")
 	cf.StringVar(&testList, "list", "", "")
 	cf.StringVar(&testMemProfile, "memprofile", "", "")
 	cf.String("memprofilerate", "", "")
@@ -60,15 +65,17 @@ func init() {
 	cf.String("run", "", "")
 	cf.Bool("short", false, "")
 	cf.String("skip", "", "")
-	cf.DurationVar(&testTimeout, "timeout", 10*time.Minute, "")
+	cf.DurationVar(&testTimeout, "timeout", 10*time.Minute, "") // known to cmd/dist
 	cf.String("fuzztime", "", "")
 	cf.String("fuzzminimizetime", "", "")
 	cf.StringVar(&testTrace, "trace", "", "")
 	cf.Var(&testV, "v", "")
 	cf.Var(&testShuffle, "shuffle", "")
 
-	for name := range passFlagToTest {
-		cf.Var(cf.Lookup(name).Value, "test."+name, "")
+	for name, ok := range passFlagToTest {
+		if ok {
+			cf.Var(cf.Lookup(name).Value, "test."+name, "")
+		}
 	}
 }
 
@@ -349,6 +356,12 @@ func testFlags(args []string) (packageNames, passToTest []string) {
 		injectedFlags = append(injectedFlags, "-test.v=test2json")
 		delete(addFromGOFLAGS, "v")
 		delete(addFromGOFLAGS, "test.v")
+
+		if gotestjsonbuildtext.Value() == "1" {
+			gotestjsonbuildtext.IncNonDefault()
+		} else {
+			cfg.BuildJSON = true
+		}
 	}
 
 	// Inject flags from GOFLAGS before the explicit command-line arguments.

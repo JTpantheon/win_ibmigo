@@ -21,17 +21,6 @@ import (
 	"testing"
 )
 
-// testcovdata returns the path to the unit test executable to be used as
-// standin for 'go tool covdata'.
-func testcovdata(t testing.TB) string {
-	exe, err := os.Executable()
-	if err != nil {
-		t.Helper()
-		t.Fatal(err)
-	}
-	return exe
-}
-
 // Top level tempdir for test.
 var testTempDir string
 
@@ -184,7 +173,7 @@ func TestCovTool(t *testing.T) {
 	s.exepath3, s.exedir3 = buildProg(t, "prog1", dir, "atomic", flags)
 
 	// Reuse unit test executable as tool to be tested.
-	s.tool = testcovdata(t)
+	s.tool = testenv.Executable(t)
 
 	// Create a few coverage output dirs.
 	for i := 0; i < 4; i++ {
@@ -294,7 +283,7 @@ func runToolOp(t *testing.T, s state, op string, args []string) []string {
 	cmd := testenv.Command(t, s.tool, args...)
 	b, err := cmd.CombinedOutput()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "## %s output: %s\n", op, string(b))
+		fmt.Fprintf(os.Stderr, "## %s output: %s\n", op, b)
 		t.Fatalf("%q run error: %v", op, err)
 	}
 	output := strings.TrimSpace(string(b))
@@ -672,7 +661,7 @@ func testMergeCombinePrograms(t *testing.T, s state) {
 		t.Errorf("merge run produced unexpected output: %v", lines)
 	}
 
-	// We expect the merge tool to produce exacty two files: a meta
+	// We expect the merge tool to produce exactly two files: a meta
 	// data file and a counter file. If we get more than just this one
 	// pair, something went wrong.
 	podlist, err := pods.CollectPods([]string{moutdir}, true)
@@ -808,7 +797,7 @@ func testCounterClash(t *testing.T, s state) {
 
 	// Try to merge covdata0 (from prog1.go -countermode=set) with
 	// covdata1 (from prog1.go -countermode=atomic"). This should
-	// produce a counter mode clash error.
+	// work properly, but result in multiple meta-data files.
 	ins := fmt.Sprintf("-i=%s,%s", s.outdirs[0], s.outdirs[3])
 	out := fmt.Sprintf("-o=%s", ccoutdir)
 	args := append([]string{}, "merge", ins, out, "-pcombine")
@@ -818,13 +807,27 @@ func testCounterClash(t *testing.T, s state) {
 	cmd := testenv.Command(t, s.tool, args...)
 	b, err := cmd.CombinedOutput()
 	t.Logf("%% output: %s\n", string(b))
+	if err != nil {
+		t.Fatalf("clash merge failed: %v", err)
+	}
+
+	// Ask for a textual report from the two dirs. Here we have
+	// to report the mode clash.
+	out = "-o=" + filepath.Join(ccoutdir, "file.txt")
+	args = append([]string{}, "textfmt", ins, out)
+	if debugtrace {
+		t.Logf("clash textfmt command is %s %v\n", s.tool, args)
+	}
+	cmd = testenv.Command(t, s.tool, args...)
+	b, err = cmd.CombinedOutput()
+	t.Logf("%% output: %s\n", string(b))
 	if err == nil {
-		t.Fatalf("clash merge passed unexpectedly")
+		t.Fatalf("expected mode clash")
 	}
 	got := string(b)
 	want := "counter mode clash while reading meta-data"
 	if !strings.Contains(got, want) {
-		t.Errorf("counter clash merge: wanted %s got %s", want, got)
+		t.Errorf("counter clash textfmt: wanted %s got %s", want, got)
 	}
 }
 

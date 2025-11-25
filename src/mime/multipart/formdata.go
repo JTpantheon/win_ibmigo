@@ -27,15 +27,15 @@ var ErrMessageTooLarge = errors.New("multipart: message too large")
 // It stores up to maxMemory bytes + 10MB (reserved for non-file parts)
 // in memory. File parts which can't be stored in memory will be stored on
 // disk in temporary files.
-// It returns ErrMessageTooLarge if all non-file parts can't be stored in
+// It returns [ErrMessageTooLarge] if all non-file parts can't be stored in
 // memory.
 func (r *Reader) ReadForm(maxMemory int64) (*Form, error) {
 	return r.readForm(maxMemory)
 }
 
 var (
-	multipartFiles    = godebug.New("multipartfiles")
-	multipartMaxParts = godebug.New("multipartmaxparts")
+	multipartfiles    = godebug.New("#multipartfiles") // TODO: document and remove #
+	multipartmaxparts = godebug.New("multipartmaxparts")
 )
 
 func (r *Reader) readForm(maxMemory int64) (_ *Form, err error) {
@@ -46,13 +46,15 @@ func (r *Reader) readForm(maxMemory int64) (_ *Form, err error) {
 	)
 	numDiskFiles := 0
 	combineFiles := true
-	if multipartFiles.Value() == "distinct" {
+	if multipartfiles.Value() == "distinct" {
 		combineFiles = false
+		// multipartfiles.IncNonDefault() // TODO: uncomment after documenting
 	}
 	maxParts := 1000
-	if s := multipartMaxParts.Value(); s != "" {
+	if s := multipartmaxparts.Value(); s != "" {
 		if v, err := strconv.Atoi(s); err == nil && v >= 0 {
 			maxParts = v
+			multipartmaxparts.IncNonDefault()
 		}
 	}
 	maxHeaders := maxMIMEHeaders()
@@ -84,7 +86,7 @@ func (r *Reader) readForm(maxMemory int64) (_ *Form, err error) {
 	// since metadata is always stored in memory, not disk.
 	//
 	// maxMemoryBytes is the maximum bytes we will store in memory, including file content,
-	// non-file part values, metdata, and map entry overhead.
+	// non-file part values, metadata, and map entry overhead.
 	//
 	// We reserve an additional 10 MB in maxMemoryBytes for non-file data.
 	//
@@ -92,6 +94,9 @@ func (r *Reader) readForm(maxMemory int64) (_ *Form, err error) {
 	// unconfigurable 10 MB added on to maxMemory, is unfortunate but difficult to change
 	// within the constraints of the API as documented.
 	maxFileMemoryBytes := maxMemory
+	if maxFileMemoryBytes == math.MaxInt64 {
+		maxFileMemoryBytes--
+	}
 	maxMemoryBytes := maxMemory + int64(10<<20)
 	if maxMemoryBytes <= 0 {
 		if maxMemory < 0 {
@@ -223,7 +228,7 @@ func mimeHeaderSize(h textproto.MIMEHeader) (size int64) {
 
 // Form is a parsed multipart form.
 // Its File parts are stored either in memory or on disk,
-// and are accessible via the *FileHeader's Open method.
+// and are accessible via the [*FileHeader]'s Open method.
 // Its Value parts are stored as strings.
 // Both are keyed by field name.
 type Form struct {
@@ -231,7 +236,7 @@ type Form struct {
 	File  map[string][]*FileHeader
 }
 
-// RemoveAll removes any temporary files associated with a Form.
+// RemoveAll removes any temporary files associated with a [Form].
 func (f *Form) RemoveAll() error {
 	var err error
 	for _, fhs := range f.File {
@@ -259,7 +264,7 @@ type FileHeader struct {
 	tmpshared bool
 }
 
-// Open opens and returns the FileHeader's associated File.
+// Open opens and returns the [FileHeader]'s associated File.
 func (fh *FileHeader) Open() (File, error) {
 	if b := fh.content; b != nil {
 		r := io.NewSectionReader(bytes.NewReader(b), 0, int64(len(b)))

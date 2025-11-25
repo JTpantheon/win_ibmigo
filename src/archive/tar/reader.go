@@ -35,7 +35,7 @@ type fileReader interface {
 	WriteTo(io.Writer) (int64, error)
 }
 
-// NewReader creates a new Reader reading from r.
+// NewReader creates a new [Reader] reading from r.
 func NewReader(r io.Reader) *Reader {
 	return &Reader{r: r, curr: &regFileReader{r, 0}}
 }
@@ -47,18 +47,21 @@ func NewReader(r io.Reader) *Reader {
 //
 // If Next encounters a non-local name (as defined by [filepath.IsLocal])
 // and the GODEBUG environment variable contains `tarinsecurepath=0`,
-// Next returns the header with an ErrInsecurePath error.
+// Next returns the header with an [ErrInsecurePath] error.
 // A future version of Go may introduce this behavior by default.
 // Programs that want to accept non-local names can ignore
-// the ErrInsecurePath error and use the returned header.
+// the [ErrInsecurePath] error and use the returned header.
 func (tr *Reader) Next() (*Header, error) {
 	if tr.err != nil {
 		return nil, tr.err
 	}
 	hdr, err := tr.next()
 	tr.err = err
-	if err == nil && tarinsecurepath.Value() == "0" && !filepath.IsLocal(hdr.Name) {
-		err = ErrInsecurePath
+	if err == nil && !filepath.IsLocal(hdr.Name) {
+		if tarinsecurepath.Value() == "0" {
+			tarinsecurepath.IncNonDefault()
+			err = ErrInsecurePath
+		}
 	}
 	return hdr, err
 }
@@ -528,12 +531,17 @@ func readGNUSparseMap1x0(r io.Reader) (sparseDatas, error) {
 		cntNewline int64
 		buf        bytes.Buffer
 		blk        block
+		totalSize  int
 	)
 
 	// feedTokens copies data in blocks from r into buf until there are
 	// at least cnt newlines in buf. It will not read more blocks than needed.
 	feedTokens := func(n int64) error {
 		for cntNewline < n {
+			totalSize += len(blk)
+			if totalSize > maxSpecialFileSize {
+				return errSparseTooLong
+			}
 			if _, err := mustReadFull(r, blk[:]); err != nil {
 				return err
 			}
@@ -566,8 +574,8 @@ func readGNUSparseMap1x0(r io.Reader) (sparseDatas, error) {
 	}
 
 	// Parse for all member entries.
-	// numEntries is trusted after this since a potential attacker must have
-	// committed resources proportional to what this library used.
+	// numEntries is trusted after this since feedTokens limits the number of
+	// tokens based on maxSpecialFileSize.
 	if err := feedTokens(2 * numEntries); err != nil {
 		return nil, err
 	}
@@ -620,14 +628,14 @@ func readGNUSparseMap0x1(paxHdrs map[string]string) (sparseDatas, error) {
 
 // Read reads from the current file in the tar archive.
 // It returns (0, io.EOF) when it reaches the end of that file,
-// until Next is called to advance to the next file.
+// until [Next] is called to advance to the next file.
 //
 // If the current file is sparse, then the regions marked as a hole
 // are read back as NUL-bytes.
 //
-// Calling Read on special types like TypeLink, TypeSymlink, TypeChar,
-// TypeBlock, TypeDir, and TypeFifo returns (0, io.EOF) regardless of what
-// the Header.Size claims.
+// Calling Read on special types like [TypeLink], [TypeSymlink], [TypeChar],
+// [TypeBlock], [TypeDir], and [TypeFifo] returns (0, [io.EOF]) regardless of what
+// the [Header.Size] claims.
 func (tr *Reader) Read(b []byte) (int, error) {
 	if tr.err != nil {
 		return 0, tr.err
@@ -808,9 +816,7 @@ func (sr sparseFileReader) physicalRemaining() int64 {
 type zeroReader struct{}
 
 func (zeroReader) Read(b []byte) (int, error) {
-	for i := range b {
-		b[i] = 0
-	}
+	clear(b)
 	return len(b), nil
 }
 

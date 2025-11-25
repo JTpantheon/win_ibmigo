@@ -7,7 +7,7 @@
 package runtime
 
 import (
-	"runtime/internal/atomic"
+	"internal/runtime/atomic"
 	"unsafe"
 )
 
@@ -66,4 +66,12 @@ func lfnodeValidate(node *lfnode) {
 		println("runtime: bad lfnode address", hex(uintptr(unsafe.Pointer(node))))
 		throw("bad lfnode address")
 	}
+}
+
+func lfstackPack(node *lfnode, cnt uintptr) uint64 {
+	return uint64(taggedPointerPack(unsafe.Pointer(node), cnt))
+}
+
+func lfstackUnpack(val uint64) *lfnode {
+	return (*lfnode)(taggedPointer(val).pointer())
 }

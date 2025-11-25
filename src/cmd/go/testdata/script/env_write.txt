@@ -65,14 +65,16 @@ go env -u GOPATH
 ! stderr .+
 
 # go env -w rejects unknown or bad variables
-! go env -w GODEBUG=gctrace=1
-stderr 'unknown go command variable GODEBUG'
+! go env -w GOGC=off
+stderr 'unknown go command variable GOGC'
 ! go env -w GOEXE=.bat
 stderr 'GOEXE cannot be modified'
 ! go env -w GOVERSION=customversion
 stderr 'GOVERSION cannot be modified'
 ! go env -w GOENV=/env
 stderr 'GOENV can only be set using the OS environment'
+! go env -w GODEBUG=gctrace=1
+stderr 'GODEBUG can only be set using the OS environment'
 
 # go env -w can set multiple variables
 env CC=
@@ -173,6 +175,7 @@ go env -w GOOS=linux GOARCH=mips
 env GOOS=windows
 ! go env -u GOOS
 stderr 'unsupported GOOS/GOARCH.*windows/mips$'
+env GOOS=
 
 # go env -w should reject relative paths in GOMODCACHE environment.
 ! go env -w GOMODCACHE=~/test
@@ -185,3 +188,21 @@ env GOEXPERIMENT=
 ! go env -w GOEXPERIMENT=badexp
 stderr 'unknown GOEXPERIMENT badexp'
 go env -w GOEXPERIMENT=fieldtrack
+
+# go env -w and go env -u work on unknown fields already in the go/env file
+cp bad.env $GOENV
+go env GOENV
+cat $GOENV
+go env
+! stdout UNKNOWN
+go env UNKNOWN
+stdout yes
+go env -w UNKNOWN=maybe
+go env UNKNOWN
+stdout maybe
+go env -u UNKNOWN
+go env UNKNOWN
+! stdout . # gone
+
+-- bad.env --
+UNKNOWN=yes
