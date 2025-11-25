@@ -45,6 +45,7 @@ echo "-----------------------------------"
 # Check tagptr_64bit.go (Go 1.24+) or lfstack_64bit.go (Go 1.20)
 if [ -f "$GO_SRC_DIR/src/runtime/tagptr_64bit.go" ]; then
     test_file "src/runtime/tagptr_64bit.go" "0x7<<56" "Memory address 0x7<<56 in tagptr_64bit.go"
+    # Check that old address (0xa<<56) is not present in code (matching "| 0xa<<56" or "+ 0xa<<56")
     if grep -E "[|+][[:space:]]*0xa<<56" "$GO_SRC_DIR/src/runtime/tagptr_64bit.go" 2>/dev/null; then
         echo -e "${RED}❌ FAIL${NC} - OLD address 0xa<<56 should NOT exist in tagptr_64bit.go"
         ((FAIL_COUNT++))
@@ -54,6 +55,7 @@ if [ -f "$GO_SRC_DIR/src/runtime/tagptr_64bit.go" ]; then
     fi
 elif [ -f "$GO_SRC_DIR/src/runtime/lfstack_64bit.go" ]; then
     test_file "src/runtime/lfstack_64bit.go" "0x7<<56" "Memory address 0x7<<56 in lfstack_64bit.go"
+    # Check that old address (0xa<<56) is not present in code (matching "| 0xa<<56" or "+ 0xa<<56")
     if grep -E "[|+][[:space:]]*0xa<<56" "$GO_SRC_DIR/src/runtime/lfstack_64bit.go" 2>/dev/null; then
         echo -e "${RED}❌ FAIL${NC} - OLD address 0xa<<56 should NOT exist in lfstack_64bit.go"
         ((FAIL_COUNT++))
